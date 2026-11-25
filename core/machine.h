@@ -256,6 +256,10 @@ typedef struct HvMachine {
     HvStats stats;
     int chain;               /* block chaining and the indirect-branch cache are enabled */
     int wfe_sleep;           /* a WFE with no watched word sleeps (1 ms at most) until woken: the SEP polls that way */
+    /* Apple's implementation-defined registers (op0 3, CRn 15) keep what is written (HvCpu.impdef), each
+       logged the first time it is used; off: they read 0, writes are ignored, every access logged. */
+    int impdef_store;
+    uint8_t impdef_seen[8 * 16 * 8 / 8];
     uint64_t *slots;         /* chainable exits' targets (0: not chained) */
     uint32_t **slot_site;    /* the B in each exit's stub that chaining rewrites to jump to the target */
     uint32_t **slot_stub;    /* what that B goes to while it isn't chained */

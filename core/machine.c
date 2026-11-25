@@ -623,6 +623,8 @@ void hv_cpu_reset_index(HvCpu *cpu, HvMachine *m, uint32_t index) {
     m->cpus[index] = cpu;
     if (m->ncpus <= (int)index) m->ncpus = (int)index + 1;
     if (index == 0) m->cpu = cpu;
+    /* APSTS_EL1.MKEYVld: the pointer-auth master key is valid (vphone's iBoot waits for it). */
+    if (m->impdef_store) cpu->impdef[6][12][4] = 1;
     HvPerCpu *p = cpu->pc_state;
     /* Ids start over, so entries tagged with the old ones must go. */
     for (int t = 0; t < HV_IJC_TABLES; t++)

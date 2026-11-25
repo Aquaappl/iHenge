@@ -171,6 +171,7 @@ typedef struct HvCpu {
     _Atomic int halted;      /* HvHaltReason; published across CPU and UI threads */
     int off;                 /* PSCI: powered off (a secondary not started yet, or CPU_OFF) until CPU_ON */
     int parked_off;          /* off, and its thread is waiting (so CPU_ON may reset it) */
+    uint64_t impdef[8][16][8]; /* Apple's S3_<op1>_C15_<crm>_<op2> as written, with m->impdef_store */
 } HvCpu;
 
 #define HV_CPU_X(n)        ((n) * 8)

@@ -68,6 +68,18 @@ static int el0_allowed(HvCpu *cpu, uint32_t reg, int write) {
 }
 
 /* Returns 0 and sets *v, or -1 if the register does not exist. */
+/* An Apple implementation-defined register's storage (op0 3, CRn 15), logging
+   the machine's first use of each one with the guest PC, as qemu-vphone does. */
+static uint64_t *impdef_slot(HvCpu *cpu, uint32_t reg, const char *how) {
+    unsigned op1 = (reg >> 11) & 7, crm = (reg >> 3) & 15, op2 = reg & 7, bit = (op1 * 16 + crm) * 8 + op2;
+    HvMachine *m = cpu->m;
+    uint8_t mask = (uint8_t)(1u << (bit & 7));
+    if (!(__atomic_fetch_or(&m->impdef_seen[bit >> 3], mask, __ATOMIC_RELAXED) & mask) && m->log)
+        fprintf(stderr, "hengevm: implementation-defined S3_%u_C15_C%u_%u first %s by cpu %u at pc %llx\n", op1, crm, op2,
+                how, cpu->index, (unsigned long long)cpu->pc);
+    return &cpu->impdef[op1][crm][op2];
+}
+
 static int read_reg(HvCpu *cpu, uint32_t reg, uint64_t *v) {
     uint64_t now = counter();
     HvMachine *m = cpu->m;
@@ -159,6 +171,10 @@ static int read_reg(HvCpu *cpu, uint32_t reg, uint64_t *v) {
        kernel reads error-status registers there (S3_6_C15_C0_0, S3_3_C15_C8_0..)
        when it reports a machine error; zero means no error recorded. */
     if ((reg >> 14) == 3 && ((reg >> 7) & 15) == 15) {
+        if (m->impdef_store) {
+            *v = *impdef_slot(cpu, reg, "read");
+            return 0;
+        }
         if (m->log) fprintf(stderr, "hengevm: read of implementation-defined S3_%u_C15_C%u_%u = 0\n", (reg >> 11) & 7,
                             (reg >> 3) & 15, reg & 7);
         *v = 0;
@@ -268,6 +284,10 @@ other:
     if ((reg >> 14) == 2 || (((reg >> 7) & 15) == 9 && (reg >> 14) == 3)) return 0;
     /* Apple implementation-defined registers (op0 3, CRn 15): ignored, see read_reg. */
     if ((reg >> 14) == 3 && ((reg >> 7) & 15) == 15) {
+        if (m->impdef_store) {
+            *impdef_slot(cpu, reg, "write") = v;
+            return 0;
+        }
         if (m->log) fprintf(stderr, "hengevm: write to implementation-defined S3_%u_C15_C%u_%u ignored\n", (reg >> 11) & 7,
                             (reg >> 3) & 15, reg & 7);
         return 0;
