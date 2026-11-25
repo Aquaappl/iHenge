@@ -29,7 +29,12 @@ typedef struct HvVmConfig {
     const char *product_name, *model_id;
     /* JIT memory the host already has (iOS: granted by a debugger), or NULL to map it here. */
     void *jit_rx, *jit_rw;
-    size_t jit_bytes;         /* 0: 768 MB */
+    size_t jit_bytes;         /* 0: 768 MB; with the SEP, its share comes out of a granted region */
+    /* vresearch101's SEP core: its boot ROM (OpenSEP.bin; NULL: no SEP) and SEPStorage. Its JIT region
+       and block hash are sized apart (0: 64 MB, 2^16 buckets) so a small phone can shrink them. */
+    const char *sep_rom, *sep_storage;
+    size_t sep_jit_bytes;
+    unsigned sep_hash_bits;
 } HvVmConfig;
 
 /* Returns 0, or -1 with a reason in err. */

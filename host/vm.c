@@ -37,6 +37,12 @@ static CFTypeRef display_layer;
 static int display_layer_set;
 static _Atomic(HvPvgLite *) display_pvg; /* published only when the board is ready */
 static HvDisk disk = {.fd = -1, .wfd = -1}, aux = {.fd = -1, .wfd = -1};
+/* vresearch101's SEP: a second machine with one CPU, on its own thread. */
+static HvMachine sep_m;
+static HvCpu sep_cpu;
+static HvDisk sep_disk = {.fd = -1, .wfd = -1};
+static int sep_on, sep_started;
+static pthread_t sep_thread;
 static int machine_created, signals_installed;
 static uint64_t boot_args_offset;
 static double boot_last_scan;
@@ -274,7 +280,11 @@ int hv_vm_create(const HvVmConfig *c, char *err, size_t errlen) {
     if (hv_disk_open(&aux, c->aux, c->aux_offset ? c->aux_offset : 16384, 0) != 0)
         return fail(err, errlen, "Cannot open the auxiliary storage.");
     size_t jit = c->jit_bytes ? c->jit_bytes : (size_t)768 << 20;
-    int r = c->jit_rx ? hv_machine_init_jit(&m, c->jit_rx, c->jit_rw, jit) : hv_machine_init(&m, jit);
+    int with_sep = c->machine == HV_MACHINE_VRESEARCH101 && c->sep_rom;
+    size_t sep_jit = c->sep_jit_bytes ? c->sep_jit_bytes : (size_t)64 << 20;
+    if (with_sep && c->jit_rx && sep_jit >= jit) return fail(err, errlen, "The JIT region is too small for the SEP's share.");
+    size_t ap_jit = with_sep && c->jit_rx ? jit - sep_jit : jit; /* a granted region is split: the SEP takes its end */
+    int r = c->jit_rx ? hv_machine_init_jit(&m, c->jit_rx, c->jit_rw, ap_jit) : hv_machine_init(&m, jit);
     if (r != 0) return fail(err, errlen, "Cannot set up the JIT region.");
     m.log = c->log;
     m.gen_checks = getenv("HV_JIT_POISON") != NULL;
@@ -295,6 +305,17 @@ int hv_vm_create(const HvVmConfig *c, char *err, size_t errlen) {
         return fail(err, errlen, "Cannot build the machine (not enough memory for the guest's RAM?).");
     if (hv_vmapple_load_rom(&board, c->rom) != 0) return fail(err, errlen, "Cannot read the boot ROM.");
     hv_vmapple_reset_cpu(&board);
+    if (with_sep) {
+        if (c->sep_storage && hv_disk_open(&sep_disk, c->sep_storage, 0, 0) != 0)
+            return fail(err, errlen, "Cannot open the SEP storage.");
+        uint8_t *rx = c->jit_rx ? (uint8_t *)c->jit_rx + ap_jit : NULL, *rw = c->jit_rw ? (uint8_t *)c->jit_rw + ap_jit : NULL;
+        if (hv_machine_init_sized(&sep_m, rx, rw, sep_jit, c->sep_hash_bits ? c->sep_hash_bits : 16) != 0)
+            return fail(err, errlen, "Cannot set up the SEP's JIT region.");
+        if (hv_vresearch101_add_sep(&board, &sep_m, &sep_cpu, c->sep_rom, c->sep_storage ? &sep_disk : NULL) != 0)
+            return fail(err, errlen, "Cannot build the SEP (its ROM, OpenSEP.bin?).");
+        hv_vresearch101_reset_sep(&board);
+        sep_on = 1;
+    }
     /* The device-tree identity fixup is for macOS guests. */
     dt_fixup_on = !c->installer && c->machine == HV_MACHINE_VMAPPLE && hv_dt_fixup_start(board.ram, board.ram_size, VMAPPLE_MEM, c->product_name, c->model_id);
     if (dt_fixup_on) hv_dt_fixup_run();
@@ -336,6 +357,12 @@ void hv_vm_destroy(void) {
     hv_disk_close(&disk);
     hv_disk_close(&aux);
     hv_machine_free(&m);
+    if (sep_on) {
+        hv_machine_free(&sep_m);
+        memset(&sep_cpu, 0, sizeof sep_cpu);
+        hv_disk_close(&sep_disk);
+        sep_on = 0;
+    }
     memset(cpus, 0, sizeof cpus);
     ncpus = 0;
     boot_args_offset = 0;
@@ -349,8 +376,27 @@ static void *kicker_thread(void *unused) {
     while (!atomic_load(&kicker_stopped)) {
         usleep(1000);
         hv_machine_kick_all(&m);
+        if (sep_on) hv_machine_kick_all(&sep_m);
     }
     return NULL;
+}
+
+static void *sep_cpu_thread(void *unused) {
+    (void)unused;
+    hv_vm_cpu_qos();
+    int r = hv_run(&sep_cpu);
+    if (!sep_cpu.halted)
+        fprintf(stderr, "hengevm: the SEP stopped (%s) at pc %llx el%u\n", hv_vm_reason_name(r),
+                (unsigned long long)sep_cpu.pc, sep_cpu.el);
+    return NULL;
+}
+
+/* The SEP stops with the AP. */
+static void stop_sep(void) {
+    if (!sep_on) return;
+    hv_machine_halt(&sep_m, HV_HALT_HOST);
+    if (sep_started) pthread_join(sep_thread, NULL);
+    sep_started = 0;
 }
 
 /* A thread that runs guest code. While a block runs its SP register holds the
@@ -510,6 +556,7 @@ uint64_t hv_vm_paused_counter(void) { return paused_counter; }
 int64_t hv_vm_paused_wall_ns(void) { return paused_wall_ns; }
 
 int hv_vm_pause(void) {
+    if (sep_on) return -1; /* saving the SEP's machine too is not done yet */
     pthread_mutex_lock(&pause_mu);
     if (pause_state == 2) {
         pthread_mutex_unlock(&pause_mu);
@@ -574,6 +621,7 @@ static void *cpu0_thread(void *unused) {
     /* Finish CPU activity before flushing or telling the UI the Mac stopped.
        CPU 0 can also leave for a fatal execution error. */
     hv_machine_halt(&m, HV_HALT_HOST);
+    stop_sep();
     atomic_store(&kicker_stopped, 1);
     for (int i = 1; i < ncpus; i++)
         if (secondary_started[i]) pthread_join(secondary_threads[i], NULL);
@@ -609,6 +657,10 @@ int hv_vm_start(int cpu0, void (*on_exit)(int reason)) {
         secondary_started[i] = pthread_create(&secondary_threads[i], &attr, secondary_thread, &cpus[i]) == 0;
         if (!secondary_started[i]) goto failed;
     }
+    if (sep_on) {
+        sep_started = pthread_create(&sep_thread, &attr, sep_cpu_thread, NULL) == 0;
+        if (!sep_started) goto failed;
+    }
     kicker_started = pthread_create(&kicker, NULL, kicker_thread, NULL) == 0;
     if (!kicker_started) goto failed;
     if (cpu0) {
@@ -620,6 +672,7 @@ int hv_vm_start(int cpu0, void (*on_exit)(int reason)) {
 failed:
     pthread_attr_destroy(&attr);
     hv_machine_halt(&m, HV_HALT_HOST);
+    stop_sep();
     atomic_store(&kicker_stopped, 1);
     for (int i = 1; i < ncpus; i++)
         if (secondary_started[i]) pthread_join(secondary_threads[i], NULL);
@@ -631,6 +684,7 @@ failed:
 
 void hv_vm_stop(void) {
     hv_machine_halt(&m, HV_HALT_HOST);
+    if (sep_on) hv_machine_halt(&sep_m, HV_HALT_HOST);
 }
 
 /* macOS's virtio mouse driver drops BTN_RIGHT, so the right button is a Control-click, with the right

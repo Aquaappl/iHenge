@@ -87,6 +87,7 @@ static void push(HvVpiop *v, int from) {
     memcpy(q->msg[(q->head + q->count) % HV_VPIOP_DEPTH], src->out_msg, HV_VPIOP_MSG);
     q->count++;
     memset(src->out_msg, 0, HV_VPIOP_MSG);
+    if (from == HV_VPIOP_AP && v->sep_cpu) hv_cpu_wake(v->sep_cpu);
 }
 
 static uint64_t vpiop_read(void *opaque, uint64_t off, unsigned size) {
@@ -144,9 +145,37 @@ static void vpiop_write(void *opaque, uint64_t off, uint64_t val, unsigned size)
     update_irq(v);
 }
 
+static uint64_t sep_read(void *opaque, uint64_t off, unsigned size) {
+    HvVpiop *v = ((HvVpiopBank *)opaque)->v;
+    hv_dev_lock(v->ap_m);
+    uint64_t r = vpiop_read(opaque, off, size);
+    hv_dev_unlock(v->ap_m);
+    return r;
+}
+
+static void sep_write(void *opaque, uint64_t off, uint64_t val, unsigned size) {
+    HvVpiop *v = ((HvVpiopBank *)opaque)->v;
+    hv_dev_lock(v->ap_m);
+    vpiop_write(opaque, off, val, size);
+    hv_dev_unlock(v->ap_m);
+}
+
+void hv_vpiop_attach_sep(HvVpiop *v, HvMachine *sep_m, HvGic *sep_gic, HvCpu *sep_cpu, uint64_t pa, int intid_inbox,
+                         int intid_outbox) {
+    hv_dev_lock(v->ap_m);
+    v->gic[HV_VPIOP_SEP] = sep_gic;
+    v->intid_inbox[HV_VPIOP_SEP] = intid_inbox;
+    v->intid_outbox[HV_VPIOP_SEP] = intid_outbox;
+    v->sep_cpu = sep_cpu;
+    hv_dev_unlock(v->ap_m);
+    hv_machine_add_mmio(sep_m, pa, 0x1000, &v->bank[HV_VPIOP_SEP], sep_read, sep_write, "vpiop-sep");
+    sep_m->mmio[sep_m->nmmio - 1].self_locked = 1; /* it takes the AP's lock, not the SEP's */
+}
+
 HvVpiop *hv_vpiop_create(HvMachine *m, HvGic *gic, uint64_t pa, int intid_inbox, int intid_outbox) {
     HvVpiop *v = calloc(1, sizeof *v);
     if (!v) return NULL;
+    v->ap_m = m;
     v->log = getenv("HV_VPIOP_LOG") != NULL;
     for (int i = 0; i < 2; i++) v->bank[i] = (HvVpiopBank){v, i};
     v->gic[HV_VPIOP_AP] = gic;

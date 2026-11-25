@@ -60,10 +60,15 @@ static void pl011_write(void *opaque, uint64_t off, uint64_t v, unsigned size) {
     (void)size;
     HvPl011 *u = opaque;
     switch (off) {
-    case 0x00:
+    case 0x00: {
+        int s = u->source & 1;
+        if (!u->mid_line[s] && u->tag[s])
+            for (const char *t = u->tag[s]; *t; t++) u->output(u->output_opaque, (uint8_t)*t);
+        u->mid_line[s] = (uint8_t)v != '\n';
         u->output(u->output_opaque, (uint8_t)v);
         u->ris |= INT_TX; /* the FIFO drained at once */
         break;
+    }
     case 0x04: break;
     case 0x24: u->ibrd = (uint32_t)v & 0xffff; break;
     case 0x28: u->fbrd = (uint32_t)v & 0x3f; break;
@@ -95,6 +100,8 @@ HvPl011 *hv_pl011_create(HvMachine *m, HvGic *gic, uint64_t pa, int intid) {
     u->ifls = 0x12;
     u->ris = INT_TX;
     u->output = default_output;
+    u->tag[0] = getenv("HV_UART_TAG_AP") ? "[ap] " : NULL;
+    u->tag[1] = "[sep] ";
     hv_machine_add_mmio(m, pa, 0x1000, u, pl011_read, pl011_write, "pl011");
     return u;
 }

@@ -229,10 +229,15 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
 - [x] **M3 骨組み**：`--machine vresearch101` で OpenAVB が UART に `OpenBootROM:` を出す。
   （`devices/vresearch101.c`, `devices/vpiop.c`。SEP コアがまだないので `SEP RX empty/timeout` を
   繰り返し、最後に pvpanic。実行方法は `docs/vphone-vm.md`）
-- [ ] **M4 iBoot**：LLB と iBoot が動き、iBoot のシリアル出力が出る。
+- [x] **M4 iBoot**：LLB と iBoot が動き、iBoot のシリアル出力が出る。
+  （OpenAVB は SEP とのやりとりが終わるまで iLLB を読まないので、M6 の前半（SEP コアと OpenSEP）を
+  先にやった。iBoot の出力はリファレンスと同じで最後まで出る。その後 SPTM の入り口の `GENTER` で
+  未定義命令になる → M5。Apple 独自レジスタの一覧は `docs/vresearch101-sysregs.md`）
 - [ ] **M5 GXF**：SPTM と TXM が起動し、XNU のログが出始める。
   （GXF の単体テストを `tests/` に足す：GENTER → ガード中の MRS/MSR → GEXIT）
 - [ ] **M6 SEP**：OpenSEP → sepOS が起動し、AP の `AppleSEPManager` とメールボックスで話せる。
+  （前半は済み：SEP は 2 台目の `HvMachine`（`--sep-rom`, `--sep-storage`）。OpenSEP と OpenAVB の
+  やりとりで `SEP bootstrap complete` まで進む。SEP は WFE で眠る（`wfe_sleep`）。残りは sepOS 以降）
 - [ ] **M7 ユーザーランド**：launchd が動き、SpringBoard が表示される（Mac の GPU 経路で）。
 - [ ] **M8 タッチ**：タップとスクロールが効く。
 - [ ] **M9 iPhone**：IPA に組み込み、iPhone 13 mini で起動する（`pvg_lite` の経路）。
@@ -263,7 +268,8 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
 
 - M1 Mac mini で vphone-cli が動くか（公式に記載なし）。
 - iOS ゲストで `WKdmC/WKdmD` などの Apple 独自命令が使われるか。
-- `HvMachine` を 2 つ同時に動かせるか（監査が必要）。
+- ~~`HvMachine` を 2 つ同時に動かせるか~~ → 動く（2026-11-26 監査済み。直したのは `host/vm.c` の
+  1 台前提の部分、GIC が 1 コアのマシンを起こさない点、WFE の空回り、共有デバイスのロック）。
 - iOS ゲストが何 GB の RAM まで減らして起動するか（13 mini は RAM 4 GB）。
 - 13 mini は iOS 27.1。JIT は Henge 内蔵の StikJIT ヘルパー（iOS 26 以降）で有効にできるはず。
 - Henge の `pvg_lite` が iOS ゲストの準仮想化 GPU のコマンドをそのまま再生できるか。
