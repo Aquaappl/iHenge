@@ -220,9 +220,11 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
   VM のフォルダーの中身（`Disk.img`, `nvram.bin`, `SEPStorage`, `OpenAVB.bin`, `OpenSEP.bin`,
   `config.plist`）と ECID をメモする。（`docs/vphone-vm.md` に記録。vphone-cli は M1 Mac mini で
   問題なく動いた。VM: `iPhone17,1`/iOS 26.6.2、`vresearch101`、ECID `0x97B06A865FBDCF26`）
-- [ ] **M2 リファレンス**：qemu-vphone を Mac でビルドし（GPU なし、`GFX=0` 相当）、同じ VM を
+- [x] **M2 リファレンス**：qemu-vphone を Mac でビルドし（GPU なし、`GFX=0` 相当）、同じ VM を
   起動してシリアルログを `runs/ref/` に保存する。ここまでの起動ログを「正解」として使う。
   ビルドできなければ、ユーザーに伝えて M3 に進む。
+  （`docs/reference-qemu.md`。macOS では `VPHONE_*` の高速化を全部切る必要あり。
+  OpenAVB → SEP → iBoot → XNU → launchd まで進み、GPU がないので SpringBoard が落ちて再起動する）
 - [ ] **M3 骨組み**：`--machine vresearch101` で OpenAVB が UART に `OpenBootROM:` を出す。
 - [ ] **M4 iBoot**：LLB と iBoot が動き、iBoot のシリアル出力が出る。
 - [ ] **M5 GXF**：SPTM と TXM が起動し、XNU のログが出始める。
