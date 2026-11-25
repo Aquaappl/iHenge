@@ -259,5 +259,5 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
 - iOS ゲストで `WKdmC/WKdmD` などの Apple 独自命令が使われるか。
 - `HvMachine` を 2 つ同時に動かせるか（監査が必要）。
 - iOS ゲストが何 GB の RAM まで減らして起動するか（13 mini は RAM 4 GB）。
-- 13 mini の iOS のバージョンと、JIT を有効にする手段（StikDebug など）。
+- 13 mini は iOS 27.1。JIT は Henge 内蔵の StikJIT ヘルパー（iOS 26 以降）で有効にできるはず。
 - Henge の `pvg_lite` が iOS ゲストの準仮想化 GPU のコマンドをそのまま再生できるか。
