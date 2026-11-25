@@ -862,6 +862,11 @@ const uint32_t *hv_mmu_fetch(HvCpu *cpu, uint64_t va, uint64_t *pa, uint32_t *av
     if (!w.fsc) tlb_fill(cpu, va, cpu->el, &w);
     walk_end(cpu);
     if (w.fsc) {
+        /* SPRR: a page EL1 may not execute but GL1 may is a GXF abort, into GL1 at GXF_ABORT_EL1. */
+        if (cpu->m->gxf && cpu->el == 1 && !cpu->gl && (w.fsc & ~3u) == HV_FSC_PERMISSION(0) && w.gl_x) {
+            hv_gxf_abort(cpu, va, HV_EC_IABT_SAME << 26 | 1u << 25 | w.fsc);
+            return NULL;
+        }
         hv_raise_abort(cpu, 1, va, w.fsc, 0, w.s1ptw, va);
         return NULL;
     }
