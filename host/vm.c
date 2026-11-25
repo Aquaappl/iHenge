@@ -280,7 +280,8 @@ int hv_vm_create(const HvVmConfig *c, char *err, size_t errlen) {
     if (getenv("HV_SLOW_MEM")) m.slow_mem = 1; /* debugging: every load and store through the helper */
     ncpus = c->ncpus < 1 ? 1 : c->ncpus > HV_MAX_CPUS ? HV_MAX_CPUS : c->ncpus;
     m.big_lock_on = ncpus > 1 && getenv("HV_BIG_LOCK"); /* debugging: one CPU in guest code at a time */
-    HvCfgParams cfg = {.nr_cpus = (uint32_t)ncpus, .ecid = c->ecid, .seed = c->seed, .mac_en0 = {0x02, 0x48, 0x56, 0x4d, 0x00, 0x01},
+    HvCfgParams cfg = {.machine = c->machine, .nr_cpus = (uint32_t)ncpus, .ecid = c->ecid, .seed = c->seed,
+                       .mac_en0 = {0x02, 0x48, 0x56, 0x4d, 0x00, 0x01},
                        .serial = c->serial, .model = c->model, .soc_name = c->soc_name};
     if (c->installer) cfg.run_installer1 = cfg.run_installer2 = 1;
     if (getenv("HV_RUN_INSTALLER")) { /* experiment: "a,b" for the two installer words */
@@ -291,9 +292,10 @@ int hv_vm_create(const HvVmConfig *c, char *err, size_t errlen) {
     static const uint8_t mac[6] = {0x02, 0x48, 0x56, 0x4d, 0x00, 0x01};
     if (hv_vmapple_create(&board, &m, cpus, (c->ram_mb ? c->ram_mb : 2048) << 20, &disk, &aux, &cfg, mac) != 0)
         return fail(err, errlen, "Cannot build the machine (not enough memory for the guest's RAM?).");
-    if (hv_vmapple_load_rom(&board, c->rom) != 0) return fail(err, errlen, "Cannot read the ROM (AVPBooter.vmapple2.bin).");
+    if (hv_vmapple_load_rom(&board, c->rom) != 0) return fail(err, errlen, "Cannot read the boot ROM.");
     hv_vmapple_reset_cpu(&board);
-    dt_fixup_on = !c->installer && hv_dt_fixup_start(board.ram, board.ram_size, VMAPPLE_MEM, c->product_name, c->model_id);
+    /* The device-tree identity fixup is for macOS guests. */
+    dt_fixup_on = !c->installer && c->machine == HV_MACHINE_VMAPPLE && hv_dt_fixup_start(board.ram, board.ram_size, VMAPPLE_MEM, c->product_name, c->model_id);
     if (dt_fixup_on) hv_dt_fixup_run();
     if (board.net && !c->no_net) {
         if (hv_net_attach(&m, board.net) != 0) fprintf(stderr, "hengevm: user-mode network unavailable\n");

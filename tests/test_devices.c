@@ -120,6 +120,26 @@ static void test_gic(void) {
     check("ICENABLER1 clears", (wr32(VMAPPLE_GIC_DIST + 0x184, 6), rd32(VMAPPLE_GIC_DIST + 0x104) & 6), 0);
 }
 
+/* vresearch101's SEP mailbox, AP bank (nothing of vmapple's lives at its address). */
+static void test_vpiop(void) {
+    const uint64_t mb = VRESEARCH_SEP_MBOX;
+    const int inbox_irq = 32 + VRESEARCH_IRQ_SEP;
+    hv_vpiop_create(&m, board.gic, mb, inbox_irq, inbox_irq + 1);
+    check("cfg board id (vmapple)", rd32(VMAPPLE_CONFIG + 0x10), 0x20);
+    check("vpiop inbox empty", rd32(mb + 0x1c), 1u << 17);
+    check("vpiop outbox empty", rd32(mb + 0x20), 1u << 17);
+    wr32(mb + 0x14, 1u << 31);
+    check("vpiop ready latches", rd32(mb + 0x14) >> 31, 1);
+    wr32(mb + 0x18, 1u << 5);
+    check("outbox-empty interrupt on 0x34", board.gic->level[inbox_irq], 1);
+    check("and on 0x35", board.gic->level[inbox_irq + 1], 1);
+    wr64(mb + 0x200, 0x1111222233334444ull);
+    wr64(mb + 0x208, 0x5555666677778888ull);
+    check("message sent: outbox holds one", rd32(mb + 0x20), 1);
+    check("outbox not empty: line drops", board.gic->level[inbox_irq], 0);
+    check("outbox register cleared after send", rd32(mb + 0x200), 0);
+}
+
 static int make_disk(const char *path, uint64_t size, uint8_t salt) {
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return -1;
@@ -594,6 +614,7 @@ int main(void) {
     check("gpio edge raises SPI 5", board.gic->level[32 + VMAPPLE_IRQ_GPIO], 1);
     wr32(VMAPPLE_GPIO + 0x41c, 1u << 3);
     check("gpio interrupt cleared", board.gic->level[32 + VMAPPLE_IRQ_GPIO], 0);
+    test_vpiop();
     test_guest_programs();
 
     hv_disk_close(&root);

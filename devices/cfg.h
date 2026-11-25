@@ -5,9 +5,15 @@
 
 #include "machine.h"
 
+typedef enum HvMachineKind {
+    HV_MACHINE_VMAPPLE,      /* the virtual Mac */
+    HV_MACHINE_VRESEARCH101, /* vphone-cli's virtual iPhone */
+} HvMachineKind;
+
 /* The vmapple configuration region: 64 KB of RAM the boot ROM reads, laid
    out as QEMU's hw/vmapple/cfg.c describes it. */
 typedef struct HvCfgParams {
+    HvMachineKind machine;
     uint32_t nr_cpus;
     uint64_t ecid;
     uint64_t ram_size;

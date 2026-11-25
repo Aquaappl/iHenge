@@ -15,7 +15,7 @@ typedef struct VMAppleCfg {
     uint32_t nr_cpus;         /* 0x004 */
     uint32_t unk1;            /* 0x008 */
     uint32_t unk2;            /* 0x00c */
-    uint32_t unk3;            /* 0x010 */
+    uint32_t board_id;        /* 0x010: iBoot's BDID */
     uint32_t unk4;            /* 0x014 */
     uint64_t ecid;            /* 0x018 */
     uint64_t ram_size;        /* 0x020 */
@@ -91,7 +91,7 @@ uint8_t *hv_cfg_create(HvMachine *m, uint64_t pa, const HvCfgParams *p) {
     c->nr_cpus = p->nr_cpus ? p->nr_cpus : 1;
     c->unk1 = 1;
     c->unk2 = 1;
-    c->unk3 = 0x20;
+    c->board_id = p->machine == HV_MACHINE_VRESEARCH101 ? 0x90 : 0x20;
     c->unk4 = 0;
     c->ecid = p->ecid;
     c->ram_size = p->ram_size;

@@ -1043,7 +1043,7 @@ static void *cpu_thread(void *unused) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: hengevm --rom FILE --disk FILE --aux FILE --ecid N [--seed N] [--ram MB] [--log N] [--trace 1] [--screenshot PNG] [--watch VA] [--stats SECONDS [--profile 1]] [--cpus N] [--window] [--no-pvg] [--no-chain] [--break PC [--break-hits N]] [--dump PA LEN FILE] [--aux-offset BYTES] [--install IPSW] [--serial S] [--model S] [--soc-name S] [--product-name S] [--model-id S]\n");
+    fprintf(stderr, "usage: hengevm --rom FILE --disk FILE --aux FILE --ecid N [--machine vmapple|vresearch101] [--seed N] [--ram MB] [--log N] [--trace 1] [--screenshot PNG] [--watch VA] [--stats SECONDS [--profile 1]] [--cpus N] [--window] [--no-pvg] [--no-chain] [--break PC [--break-hits N]] [--dump PA LEN FILE] [--aux-offset BYTES] [--install IPSW] [--serial S] [--model S] [--soc-name S] [--product-name S] [--model-id S]\n");
     exit(2);
 }
 
@@ -1064,6 +1064,7 @@ static void install_progress(int step, double p, void *user) {
 
 int main(int argc, char **argv) {
     const char *rom = NULL, *disk_path = NULL, *aux_path = NULL;
+    HvMachineKind machine = HV_MACHINE_VMAPPLE;
     uint64_t seed = 0, ecid = 0, ram_mb = 4096, aux_offset = 16384;
     const char *install_ipsw = NULL, *resume_path = NULL;
     const char *share_folder = NULL;
@@ -1097,6 +1098,12 @@ int main(int argc, char **argv) {
         }
         if (i + 1 >= argc) usage();
         if (!strcmp(argv[i], "--rom")) rom = argv[++i];
+        else if (!strcmp(argv[i], "--machine")) {
+            const char *name = argv[++i];
+            if (!strcmp(name, "vmapple")) machine = HV_MACHINE_VMAPPLE;
+            else if (!strcmp(name, "vresearch101")) machine = HV_MACHINE_VRESEARCH101;
+            else usage();
+        }
         else if (!strcmp(argv[i], "--share")) { /* FOLDER: the guest reaches it at http://10.0.2.4/ */
             share_folder = argv[++i];
         }
@@ -1138,7 +1145,7 @@ int main(int argc, char **argv) {
     if (!rom || !disk_path || !aux_path) usage();
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    HvVmConfig vc = {.rom = rom, .disk = disk_path, .aux = aux_path, .aux_offset = aux_offset, .ecid = ecid, .seed = seed,
+    HvVmConfig vc = {.rom = rom, .machine = machine, .disk = disk_path, .aux = aux_path, .aux_offset = aux_offset, .ecid = ecid, .seed = seed,
                      .ram_mb = ram_mb, .ncpus = ncpus, .log = log, .no_net = getenv("HV_NO_NET") != NULL,
                      .installer = install_ipsw != NULL, .serial = serial, .model = model, .soc_name = soc_name,
                      .product_name = product_name, .model_id = model_id};

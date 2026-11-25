@@ -18,6 +18,7 @@
 #include "virtio_net.h"
 #include "virtio_snd.h"
 #include "virtio_balloon.h"
+#include "vresearch101.h"
 
 /* The virtual Mac: QEMU's vmapple memory map and interrupt numbers (hw/vmapple/vmapple.c). */
 #define VMAPPLE_FIRMWARE   0x00100000ull /* 1 MB: the boot ROM */
@@ -75,6 +76,8 @@ typedef struct HvVmapple {
     int ram_fd;              /* the file under guest RAM, kept open for the balloon's holes, or -1 */
     uint64_t panic_events;   /* last pvpanic event the guest reported */
     void *ctrr, *sealed;
+    HvMachineKind machine;
+    HvVresearch101 vr;       /* machine == HV_MACHINE_VRESEARCH101 */
     pthread_t prefault_thread;
     int prefault_started;
     void (*poll)(void);      /* extra device work on the CPU thread each tick (Mac PVG) */

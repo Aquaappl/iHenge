@@ -226,7 +226,9 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
   ビルドできなければ、ユーザーに伝えて M3 に進む。
   （`docs/reference-qemu.md`。macOS では `VPHONE_*` の高速化を全部切る必要あり。
   OpenAVB → SEP → iBoot → XNU → launchd まで進み、GPU がないので SpringBoard が落ちて再起動する）
-- [ ] **M3 骨組み**：`--machine vresearch101` で OpenAVB が UART に `OpenBootROM:` を出す。
+- [x] **M3 骨組み**：`--machine vresearch101` で OpenAVB が UART に `OpenBootROM:` を出す。
+  （`devices/vresearch101.c`, `devices/vpiop.c`。SEP コアがまだないので `SEP RX empty/timeout` を
+  繰り返し、最後に pvpanic。実行方法は `docs/vphone-vm.md`）
 - [ ] **M4 iBoot**：LLB と iBoot が動き、iBoot のシリアル出力が出る。
 - [ ] **M5 GXF**：SPTM と TXM が起動し、XNU のログが出始める。
   （GXF の単体テストを `tests/` に足す：GENTER → ガード中の MRS/MSR → GEXIT）

@@ -11,7 +11,8 @@
    it input, stop it. The macOS command-line tool and the iOS app both use this;
    graphics are the host's own business (Mac: hv_pvg_attach before starting). */
 typedef struct HvVmConfig {
-    const char *rom;          /* AVPBooter.vmapple2.bin */
+    const char *rom;          /* AVPBooter.vmapple2.bin, or OpenAVB.bin for vresearch101 */
+    HvMachineKind machine;
     const char *disk, *aux;   /* the root disk image and the auxiliary storage */
     uint64_t aux_offset;      /* where the aux image's data starts (16 KB) */
     uint64_t ecid, seed;      /* the machine identity the disk was installed with */

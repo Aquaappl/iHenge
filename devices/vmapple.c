@@ -304,7 +304,10 @@ int hv_vmapple_create(HvVmapple *b, HvMachine *m, HvCpu *cpu, uint64_t ram_size,
     hv_machine_add_mmio(m, VMAPPLE_PVPANIC, 2, b, pvpanic_read, pvpanic_write, "pvpanic");
     b->pvg = hv_pvg_lite_create(m, b->gic, VMAPPLE_GFX, VMAPPLE_IOSFC, 32 + 0x11, 32 + 0x10);
     hv_machine_add_mmio(m, VMAPPLE_RTC_SELECT, 0x4000, b, rtc_select_read, rtc_select_write, "rtc-select");
-    avp_regs_create(b, ram_size);
+    b->machine = cfg->machine;
+    if (b->machine == HV_MACHINE_VRESEARCH101) {
+        if (hv_vresearch101_add(b) != 0) return -1;
+    } else avp_regs_create(b, ram_size);
     HvCfgParams p = *cfg;
     p.ram_size = ram_size;
     b->cfg = hv_cfg_create(m, VMAPPLE_CONFIG, &p);
@@ -385,6 +388,7 @@ void hv_vmapple_destroy(HvVmapple *b) {
     free(b->aes);
     free(b->ctrr);
     free(b->sealed);
+    hv_vresearch101_destroy(b);
     free(b->cfg);
     if (b->rom && b->rom != MAP_FAILED) munmap(b->rom, ROM_SIZE);
     if (b->ram && b->ram != MAP_FAILED) munmap(b->ram, b->ram_size);

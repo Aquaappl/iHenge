@@ -36,3 +36,17 @@ Created on this Mac mini with vphone-cli (Launchpad), 2026-11-25. Lives outside 
 - `launchpad.json`: bootChain/bundle/guestEnvironment `2.18.0`
 
 vphone-cli ran fine on this M1 Mac mini — no need for the vphone-linux `docs/CREATE-ON-LINUX.md` fallback.
+
+## Running it in hengevm (`--machine vresearch101`)
+
+Boot an APFS clone, never the vphone-cli original:
+
+```bash
+V=~/vphone-vms/iphone16pro-henge
+./build/hengevm --machine vresearch101 --rom $V/OpenAVB.bin --disk $V/Disk.img --aux $V/nvram.bin \
+  --ecid 0x97b06a865fbdcf26 --cpus 4 --ram 4096 --no-pvg
+```
+
+M3 (2026-11-25): OpenAVB prints `OpenBootROM: SEP RX empty` / `SEP RX timeout` over and over (no SEP
+core yet), then after 10001 timeouts reports pvpanic event 2. `HV_VPIOP_LOG=1` logs mailbox traffic,
+`HV_AVP_LOG=1` avp-ctrr accesses.
