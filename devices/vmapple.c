@@ -234,6 +234,7 @@ static uint64_t tick_locked(HvMachine *m, HvCpu *cpu) {
     hv_virtio_snd_poll(b->snd);
     hv_virtio_usb_poll(b->vusb);
     hv_virtio_balloon_poll(b->balloon);
+    hv_virtio_vsock_poll(b->vsock);
     hv_bdif_poll(b->bdif);
     return deadline; /* every GIC state change already updated the CPU's lines */
 }
@@ -319,10 +320,15 @@ int hv_vmapple_create(HvVmapple *b, HvMachine *m, HvCpu *cpu, uint64_t ram_size,
     if (mac) b->net = hv_virtio_net_create(m, b->pcie, mac);
     b->usb = hv_xhci_create(m, b->pcie);
     if (cfg->machine == HV_MACHINE_VRESEARCH101) hv_xhci_set_touchscreen(b->usb);
+    if (cfg->machine == HV_MACHINE_VRESEARCH101)
+        b->vsock = hv_virtio_vsock_create(m, b->pcie, 3, getenv("HV_VSOCK_DIR") ? getenv("HV_VSOCK_DIR") : "/tmp/hengevm-vsock");
     /* HV_INPUT_ORDER (experiment): "keyboard" = keyboard only, "swap" = mouse first. */
     const char *order = getenv("HV_INPUT_ORDER");
+    /* vphone-cli's iPhone has no virtio keyboard or mouse (the reference VM neither): iOS would
+       take the mouse as a pointer device. Its input is the USB keyboard and touchscreen. */
+    if (cfg->machine == HV_MACHINE_VRESEARCH101) order = "none";
     if (order && !strcmp(order, "swap")) b->mouse = hv_virtio_input_create(m, b->pcie, HV_VINPUT_MOUSE);
-    b->keyboard = hv_virtio_input_create(m, b->pcie, HV_VINPUT_KEYBOARD);
+    if (!order || strcmp(order, "none")) b->keyboard = hv_virtio_input_create(m, b->pcie, HV_VINPUT_KEYBOARD);
     if (!order) b->mouse = hv_virtio_input_create(m, b->pcie, HV_VINPUT_MOUSE);
     if (!getenv("HV_NO_SOUND")) b->snd = hv_virtio_snd_create(m, b->pcie);
     if ((aux && !b->aux_blk) || (root && !b->root_blk)) return -1;

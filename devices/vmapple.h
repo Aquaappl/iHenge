@@ -19,6 +19,7 @@
 #include "virtio_snd.h"
 #include "virtio_balloon.h"
 #include "vresearch101.h"
+#include "virtio_vsock.h"
 
 /* The virtual Mac: QEMU's vmapple memory map and interrupt numbers (hw/vmapple/vmapple.c). */
 #define VMAPPLE_FIRMWARE   0x00100000ull /* 1 MB: the boot ROM */
@@ -68,6 +69,7 @@ typedef struct HvVmapple {
     HvVirtioNet *net;
     HvVirtioSnd *snd;
     HvVirtioBalloon *balloon; /* HV_BALLOON=MB (the first target; 0 = none yet) adds it; off by default until tried on a phone */
+    HvVirtioVsock *vsock;    /* vresearch101: vphoned's channel (HV_VSOCK_DIR/3.sock) */
     HvVirtioInput *keyboard, *mouse;
     HvXhci *usb;             /* USB controller with the keyboard macOS actually uses */
     HvVirtioUsb *vusb;       /* the USB device port an installer talks to (installer boots only) */
