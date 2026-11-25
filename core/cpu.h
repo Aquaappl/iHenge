@@ -281,6 +281,7 @@ enum {
     HV_EXIT_HALT,        /* PSCI off, or a test asked to stop */
     HV_EXIT_FLUSH,       /* translated code was invalidated (IC, self-modifying code) */
     HV_EXIT_FAULT_LOOP,  /* fetching the exception vector itself faulted: the guest is dead */
+    HV_EXIT_WFE,         /* a WFE with no watched word, on a machine with wfe_sleep */
 };
 
 /* PSTATE bits as laid out in SPSR. */

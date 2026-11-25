@@ -12,7 +12,7 @@ ENGINE = $(CORE) $(HOST)
 METAL_LIBS = -framework Foundation -framework QuartzCore -framework Metal -framework IOSurface -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers
 
 TESTS = $(B)/test_classify $(B)/test_jit_region $(B)/test_operands $(B)/test_jit $(B)/test_mem \
-        $(B)/test_mmu $(B)/test_exc $(B)/test_devices $(B)/test_dt_fixup $(B)/test_shutdown
+        $(B)/test_mmu $(B)/test_exc $(B)/test_devices $(B)/test_dt_fixup $(B)/test_shutdown $(B)/test_wfe
 
 all: $(TESTS) $(B)/hengevm $(B)/hengevm-ref $(B)/hvsparse
 
@@ -87,6 +87,8 @@ $(B)/test_mmu: tests/test_mmu.c $(ENGINE)
 	$(CC) $(CFLAGS) tests/test_mmu.c $(ENGINE) -o $@
 
 $(B)/test_shutdown: tests/test_shutdown.c $(ENGINE)
+	$(CC) $(CFLAGS) $^ -o $@
+$(B)/test_wfe: tests/test_wfe.c $(ENGINE)
 	$(CC) $(CFLAGS) $^ -o $@
 
 # Native app lifecycle with real devices and networking; no restore assets.

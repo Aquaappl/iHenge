@@ -121,6 +121,7 @@ const char *hv_vm_reason_name(int r) {
     switch (r) {
     case HV_EXIT_HALT: return "halt";
     case HV_EXIT_WFI: return "wfi with nothing to wake it";
+    case HV_EXIT_WFE: return "wfe with nothing to wake it";
     case HV_EXIT_UNSUPPORTED: return "unsupported";
     case HV_EXIT_FAULT_LOOP: return "fault on the exception vector";
     default: return "other";

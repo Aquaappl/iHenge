@@ -402,6 +402,11 @@ static uint32_t helper(HvCpu *cpu, const HvHelperInfo *info_in) {
         cpu->exit_reason = HV_EXIT_WFI;
         return 1;
     case HV_OP_WFE:
+        if (cpu->m->wfe_sleep && cpu->excl_addr == ~0ull) {
+            cpu->pc = info->pc + 4;
+            cpu->exit_reason = HV_EXIT_WFE;
+            return 1;
+        }
         return wfe(cpu);
     case HV_OP_UNDEF:
     default:
@@ -443,18 +448,19 @@ void hv_debug_el0_in_kernel(HvCpu *cpu, const char *what) {
     }
 }
 
-/* WFI: sleep until an interrupt is pending (masked or not) or the next timer
-   event, at most 10 ms. WFI may complete early, so the guest just runs again
-   if nothing happened. */
-static int wait_for_interrupt(HvCpu *cpu) {
+/* WFI: sleep until an interrupt is pending (masked or not), a wake (hv_cpu_wake:
+   a device, or the mailbox for the SEP's WFE) or the next timer event, at most
+   max_ticks (24 MHz). Both may complete early, so the guest just runs again if
+   nothing happened. */
+static int wait_for_interrupt(HvCpu *cpu, uint64_t max_ticks) {
     HvMachine *m = cpu->m;
     uint64_t deadline = m->tick ? m->tick(m, cpu) : 0;
     HvPerCpu *p = cpu->pc_state;
     if (p->irq_line || p->fiq_line) return 0;
     if (!m->tick) return -1; /* nothing could ever wake us */
     uint64_t now = mach_absolute_time();
-    uint64_t wait_ticks = deadline && deadline > now ? deadline - now : 240000; /* the counter runs at 24 MHz */
-    if (wait_ticks > 240000) wait_ticks = 240000;
+    uint64_t wait_ticks = deadline && deadline > now ? deadline - now : max_ticks;
+    if (wait_ticks > max_ticks) wait_ticks = max_ticks;
     uint64_t t0 = mach_absolute_time();
     /* Sleep until the next timer event or until a device thread has work for us. */
     hv_big_unlock(m); /* let the other CPUs run while this one sleeps */
@@ -1135,7 +1141,10 @@ static int run_loop(HvCpu *cpu, int one) {
         case HV_EXIT_FLUSH:
             break;
         case HV_EXIT_WFI:
-            if (wait_for_interrupt(cpu) != 0) return HV_EXIT_WFI;
+            if (wait_for_interrupt(cpu, 240000) != 0) return HV_EXIT_WFI; /* 10 ms */
+            break;
+        case HV_EXIT_WFE:
+            if (wait_for_interrupt(cpu, 24000) != 0) return HV_EXIT_WFE; /* 1 ms: the safety net if no wake comes */
             break;
         default:
             return (int)cpu->exit_reason;
