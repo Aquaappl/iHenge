@@ -46,16 +46,20 @@ int hv_knob_set(HvMachine *m, const char *name, int value) {
     return 0;
 }
 
-int hv_machine_init(HvMachine *m, size_t jit_bytes) {
-    memset(m, 0, sizeof *m);
-    if (hv_jit_region_open(&m->jit, jit_bytes) != 0) return -1;
-    return init_rest(m);
-}
+int hv_machine_init(HvMachine *m, size_t jit_bytes) { return hv_machine_init_sized(m, NULL, NULL, jit_bytes, 0); }
 
 int hv_machine_init_jit(HvMachine *m, void *rx, void *rw, size_t jit_bytes) {
-    knobs_init();
+    return hv_machine_init_sized(m, rx, rw, jit_bytes, 0);
+}
+
+int hv_machine_init_sized(HvMachine *m, void *rx, void *rw, size_t jit_bytes, unsigned hash_bits) {
+    if (rx) knobs_init();
     memset(m, 0, sizeof *m);
-    if (hv_jit_region_attach(&m->jit, rx, rw, jit_bytes) != 0) return -1;
+    if (rx ? hv_jit_region_attach(&m->jit, rx, rw, jit_bytes) : hv_jit_region_open(&m->jit, jit_bytes)) return -1;
+    if (!hash_bits) hash_bits = HV_BLOCK_HASH_BITS;
+    m->hash_mask = (1u << hash_bits) - 1;
+    m->hash = calloc((size_t)m->hash_mask + 1, sizeof *m->hash);
+    if (!m->hash) return -1;
     return init_rest(m);
 }
 
@@ -381,6 +385,7 @@ void hv_machine_free(HvMachine *m) {
         free(m->ram[i].xhead);
     }
     free(m->blocks);
+    free(m->hash);
     for (int i = 0; i < HV_MAX_CPUS; i++) {
         /* hv_run keeps a thread send right for statistics; CPU workers have ended. */
         if (m->percpu[i].thread) mach_port_deallocate(mach_task_self(), m->percpu[i].thread);

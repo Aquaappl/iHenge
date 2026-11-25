@@ -34,7 +34,7 @@ void hv_flush_blocks(HvMachine *m) {
             hv_ret_clear(m->cpus[i]); /* they point at code that is going */
             memset(m->percpu[i].jc, 0, sizeof m->percpu[i].jc);
         }
-    memset(m->hash, 0, sizeof m->hash);
+    memset(m->hash, 0, ((size_t)m->hash_mask + 1) * sizeof *m->hash);
     m->nblocks = 0;
     m->nslots = 0;
     m->nxchained = 0;
@@ -129,7 +129,7 @@ static HvBlock *lookup(HvCpu *cpu, uint64_t va, uint64_t pa, uint32_t flags, con
     __typeof__(cpu->pc_state->jc[0]) *jc = cpu->pc_state->jc;
     HvBlock *c = jc[j].va == va ? jc[j].b : NULL;
     if (c && c->pa == pa && c->flags == flags && c->ram->page_gen[c->pg] == c->gen) return c;
-    uint32_t h = hash_of(va, pa, flags);
+    uint32_t h = hash_of(m, va, pa, flags);
     HvRam *ram = hv_ram_lookup(m, pa);
     uint64_t pg = (pa - ram->pa) >> HV_TLB_PAGE_BITS;
     uint32_t gen = __atomic_load_n(&ram->page_gen[pg], __ATOMIC_ACQUIRE);
@@ -643,7 +643,7 @@ static void print_stats(HvCpu *cpu, int force) {
         { /* block hash health: chain lengths and how much of it is stale */
             uint64_t used = 0, stale = 0, maxlen = 0, sumsq = 0;
             uint32_t worst = 0;
-            for (uint32_t h = 0; h < HV_BLOCK_HASH; h++) {
+            for (uint32_t h = 0; h <= m->hash_mask; h++) {
                 uint64_t len = 0;
                 for (HvBlock *b = m->hash[h]; b; b = b->next) {
                     len++;

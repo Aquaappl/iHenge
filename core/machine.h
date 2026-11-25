@@ -60,7 +60,7 @@ typedef struct HvBlock {
 
 #define HV_MAX_RAM 8
 #define HV_MAX_MMIO 48
-#define HV_BLOCK_HASH (1 << 21) /* one bucket per block: chains are walked on every front-cache miss */
+#define HV_BLOCK_HASH_BITS 21 /* default: one bucket per block (16 MB); chains are walked on every front-cache miss */
 #define HV_JC_BITS 16
 #define HV_MAX_BLOCKS (3 << 20) /* a macOS boot runs well over a million distinct blocks; a full flush retranslates them all */
 #define HV_PROF_RING (1 << 16)
@@ -224,7 +224,8 @@ typedef struct HvMachine {
     int nmmio;
 
     HvJitRegion jit;
-    HvBlock *hash[HV_BLOCK_HASH];
+    HvBlock **hash;
+    uint32_t hash_mask;  /* buckets - 1 */
     HvBlock *blocks;
     int nblocks;
     uint32_t max_blocks, max_slots; /* sized from the JIT region (machine.c) */
@@ -295,9 +296,9 @@ typedef struct HvMachine {
     uint64_t cntvoff;
 } HvMachine;
 
-static inline uint32_t hv_block_hash(uint64_t va, uint64_t pa, uint32_t flags) {
+static inline uint32_t hv_block_hash(const HvMachine *m, uint64_t va, uint64_t pa, uint32_t flags) {
     uint64_t h = (va >> 2) ^ (pa >> 2) * 0x9e3779b97f4a7c15ull ^ flags;
-    return (uint32_t)(h ^ (h >> 29)) & (HV_BLOCK_HASH - 1);
+    return (uint32_t)(h ^ (h >> 29)) & m->hash_mask;
 }
 
 /* Lock-free: blocks are only added (release store) until a flush, which stops every CPU. */
@@ -310,6 +311,9 @@ static inline HvBlock *hv_block_find(HvMachine *m, uint32_t h, uint64_t va, uint
 int hv_machine_init(HvMachine *m, size_t jit_bytes);
 /* The same with JIT memory the host provides (iOS: the region a debugger granted and its writable alias). */
 int hv_machine_init_jit(HvMachine *m, void *rx, void *rw, size_t jit_bytes);
+/* Either of the above with the block hash's size too (2^hash_bits buckets; 0: HV_BLOCK_HASH_BITS).
+   rx NULL: a JIT region of its own. For a small second machine (the SEP). */
+int hv_machine_init_sized(HvMachine *m, void *rx, void *rw, size_t jit_bytes, unsigned hash_bits);
 void hv_machine_free(HvMachine *m);
 int hv_machine_add_ram(HvMachine *m, uint64_t pa, uint64_t size, void *host, int readonly);
 int hv_machine_add_mmio(HvMachine *m, uint64_t pa, uint64_t size, void *opaque,

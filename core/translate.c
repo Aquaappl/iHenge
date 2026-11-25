@@ -2083,7 +2083,7 @@ int hv_translate_place(HvMachine *m, HvBlock *b) {
         if (t == b->va) code = dst;
         else {
             uint64_t pa = (b->pa & ~((1ull << HV_TLB_PAGE_BITS) - 1)) | (t & ((1ull << HV_TLB_PAGE_BITS) - 1));
-            HvBlock *tb = hv_block_find(m, hv_block_hash(t, pa, b->flags), t, pa, b->flags, b->gen);
+            HvBlock *tb = hv_block_find(m, hv_block_hash(m, t, pa, b->flags), t, pa, b->flags, b->gen);
             /* Only to this CPU's own blocks: one another CPU just wrote must be
                entered through an isb first (the dispatcher, a light lookup). */
             if (tb && tb->maker == b->maker) code = tb->code;

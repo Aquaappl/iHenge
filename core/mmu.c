@@ -1031,7 +1031,7 @@ static void *ijc_resolve(HvCpu *cpu, uint64_t va, uint32_t flags) {
     uint32_t j = (uint32_t)((va >> 2) ^ (va >> 18) ^ ((uint64_t)flags << 13)) & ((1u << HV_JC_BITS) - 1);
     HvBlock *b = pcs->jc[j].va == va ? pcs->jc[j].b : NULL;
     if (!(b && b->pa == pa && b->flags == flags && b->gen == gen)) {
-        b = hv_block_find(m, hv_block_hash(va, pa, flags), va, pa, flags, gen);
+        b = hv_block_find(m, hv_block_hash(m, va, pa, flags), va, pa, flags, gen);
         if (!b) FAIL(3);
 #undef FAIL
         pcs->jc[j].va = va, pcs->jc[j].b = b;
