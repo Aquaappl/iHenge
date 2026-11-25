@@ -101,6 +101,15 @@ jobs:
         working-directory: Henge
         run: zsh ios/scripts/package_ipa.sh
 
+      # package_ipa.sh prints only error lines; keep the whole xcodebuild log when it fails.
+      - name: Upload the xcodebuild log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log-${{ github.sha }}
+          path: Henge/ios/build/DerivedData.buildlog
+          if-no-files-found: ignore
+
       - name: Upload Henge.ipa
         uses: actions/upload-artifact@v4
         with:
