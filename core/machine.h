@@ -255,7 +255,8 @@ typedef struct HvMachine {
     uint64_t watch_pa;   /* debugging: the same by physical address */
     HvStats stats;
     int chain;               /* block chaining and the indirect-branch cache are enabled */
-    int wfe_sleep;           /* a WFE with no watched word sleeps (1 ms at most) until woken: the SEP polls that way */
+    int wfe_sleep;           /* a WFE with no watched word sleeps until woken: the SEP polls that way */
+    uint64_t wfe_net_ticks;  /* the longest such a sleep lasts if nothing wakes it (24 MHz; 0: 1 ms) */
     /* Apple's implementation-defined registers (op0 3, CRn 15) keep what is written (HvCpu.impdef), each
        logged the first time it is used; off: they read 0, writes are ignored, every access logged. */
     int impdef_store;

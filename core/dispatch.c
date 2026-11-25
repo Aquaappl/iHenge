@@ -1143,8 +1143,8 @@ static int run_loop(HvCpu *cpu, int one) {
         case HV_EXIT_WFI:
             if (wait_for_interrupt(cpu, 240000) != 0) return HV_EXIT_WFI; /* 10 ms */
             break;
-        case HV_EXIT_WFE:
-            if (wait_for_interrupt(cpu, 24000) != 0) return HV_EXIT_WFE; /* 1 ms: the safety net if no wake comes */
+        case HV_EXIT_WFE: /* the net: how long at most if no wake comes */
+            if (wait_for_interrupt(cpu, cpu->m->wfe_net_ticks ? cpu->m->wfe_net_ticks : 24000) != 0) return HV_EXIT_WFE;
             break;
         default:
             return (int)cpu->exit_reason;
