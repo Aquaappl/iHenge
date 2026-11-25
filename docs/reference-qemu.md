@@ -23,7 +23,9 @@ ninja qemu-system-aarch64
 - `--disable-pvg` does not work for the same reason; leaving PVG on auto is fine (not found).
 - The Homebrew include/lib paths are needed because lzfse ships no pkg-config file.
 
-## Local portability edits (not upstreamed, not copied here)
+## Local portability edits (`tools/qemu-vphone-macos.patch`)
+
+Apply after cloning: `git -C ~/refs/qemu-vphone-build apply ~/iHenge/tools/qemu-vphone-macos.patch`.
 
 Two Linux-only spots fail to compile on macOS; both are debug/measurement code:
 
@@ -34,8 +36,6 @@ Two Linux-only spots fail to compile on macOS; both are debug/measurement code:
    `PERF_COUNT_HW_INSTRUCTIONS 1` otherwise, and make `vphone_mark_open()` return `-1`
    (`errno = ENOSYS`) off Linux. Only matters with `VPHONE_MARK=1`.
 
-The diff is not stored in this repo because the context lines come from the fork's `target/arm`
-changes, which may be AGPL-3.0 (see CLAUDE.md の「ライセンス」).
 
 ## Run
 

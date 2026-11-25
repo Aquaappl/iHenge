@@ -1,0 +1,53 @@
+diff --git a/hw/usb/dev-hid.c b/hw/usb/dev-hid.c
+index 02e44ac..d8089b3 100644
+--- a/hw/usb/dev-hid.c
++++ b/hw/usb/dev-hid.c
+@@ -1041,7 +1041,11 @@ static int usb_hid_pointer_poll(USBHIDState *us, uint8_t *buf, int len)
+         }
+         if (on) {
+             struct timespec ts;
++            #ifdef __APPLE__
++            clock_gettime(CLOCK_MONOTONIC, &ts);
++#else
+             clock_gettime(CLOCK_BOOTTIME, &ts);
++#endif
+             fprintf(stderr, "touchrep %" PRIu64 " btn %d x %d y %d\n",
+                     (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec, tablet[0],
+                     tablet[1] | (tablet[2] << 8), tablet[3] | (tablet[4] << 8));
+diff --git a/target/arm/helper.c b/target/arm/helper.c
+index 0e118aa..08c0625 100644
+--- a/target/arm/helper.c
++++ b/target/arm/helper.c
+@@ -2725,8 +2725,13 @@ static void vphone_asid_trace(CPUARMState *env, uint64_t value)
+  * global totals. Work of every thread of the process, on any vCPU, kernel
+  * work on its behalf included, is counted; other processes are not.
+  */
++#ifdef __linux__
+ #include <linux/perf_event.h>
+ #include <sys/syscall.h>
++#else
++#define PERF_COUNT_HW_CPU_CYCLES 0
++#define PERF_COUNT_HW_INSTRUCTIONS 1
++#endif
+ 
+ static int vphone_mark_tracked = -1;    /* ASID, or -1 */
+ static uint32_t vphone_mark_gen;
+@@ -2758,6 +2763,7 @@ bool vphone_mark_on(void)
+ 
+ static int vphone_mark_open(uint64_t pmu, uint64_t config, int group)
+ {
++#ifdef __linux__
+     struct perf_event_attr a = {
+         .size = sizeof(a),
+         .type = PERF_TYPE_HARDWARE,
+@@ -2767,6 +2773,10 @@ static int vphone_mark_open(uint64_t pmu, uint64_t config, int group)
+         .read_format = PERF_FORMAT_GROUP,
+     };
+     return syscall(SYS_perf_event_open, &a, 0, -1, group, 0);
++#else
++    errno = ENOSYS;
++    return -1;
++#endif
+ }
+ 
+ static void vphone_mark_read(uint64_t v[3])
