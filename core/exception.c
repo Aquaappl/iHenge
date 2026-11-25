@@ -256,6 +256,9 @@ static uint64_t psci(HvCpu *cpu, uint64_t fn) {
             return (uint64_t)-3;
         }
         hv_cpu_reset_index(t, cpu->m, t->index);
+        /* An Apple core started by CPU_ON runs SPTM's GENTER path using FP/SIMD before anything writes
+           CPACR_EL1: it starts with FP on, as Virtualization.framework (and qemu-vphone) start it. */
+        if (cpu->m->gxf) t->cpacr_el1 |= 3ull << 20;
         t->mpidr = mpidr;
         t->pc = entry;
         t->x[0] = context;
