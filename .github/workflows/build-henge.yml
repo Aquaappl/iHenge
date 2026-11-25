@@ -101,7 +101,18 @@ jobs:
         working-directory: Henge
         run: zsh ios/scripts/package_ipa.sh
 
-      # package_ipa.sh prints only error lines; keep the whole xcodebuild log when it fails.
+      # package_ipa.sh prints only error lines: show each error with the build step and include chain it came from.
+      - name: Show build errors in context
+        if: failure()
+        run: |
+          log=Henge/ios/build/DerivedData.buildlog
+          [ -f "$log" ] || exit 0
+          awk '/^(CompileC|CompileSwift|SwiftCompile|SwiftEmitModule|SwiftDriver|EmitSwiftModule|ScanDependencies|PrecompileModule|CompileAssetCatalog|Ld) /{step=$0; inc=""}
+               /^In file included from|^While building module/{inc=inc"\n  "$0}
+               /error:/{print "STEP: " substr(step,1,300) inc "\n  " $0 "\n"}' "$log" | head -80
+          echo "--- tail ---"; tail -40 "$log" | cut -c1-300
+
+      # Keep the whole xcodebuild log too.
       - name: Upload the xcodebuild log
         if: failure()
         uses: actions/upload-artifact@v4
