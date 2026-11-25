@@ -215,10 +215,11 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
 
 - [ ] **M0 足場**：Mac mini で `make` と `make test` が通る。`hengevm --install` で macOS を入れて
   起動できる。必要な Homebrew パッケージ（`libslirp` など）を `docs/` にメモする。
-- [ ] **M1 VM を用意**：ユーザーが vphone-cli（Launchpad）で iOS 26.x の VM を作る。
+- [x] **M1 VM を用意**：ユーザーが vphone-cli（Launchpad）で iOS 26.x の VM を作る。
   M1 で動かなければ、vphone-linux の `docs/CREATE-ON-LINUX.md` の手順を検討する。
   VM のフォルダーの中身（`Disk.img`, `nvram.bin`, `SEPStorage`, `OpenAVB.bin`, `OpenSEP.bin`,
-  `config.plist`）と ECID をメモする。
+  `config.plist`）と ECID をメモする。（`docs/vphone-vm.md` に記録。vphone-cli は M1 Mac mini で
+  問題なく動いた。VM: `iPhone17,1`/iOS 26.6.2、`vresearch101`、ECID `0x97B06A865FBDCF26`）
 - [ ] **M2 リファレンス**：qemu-vphone を Mac でビルドし（GPU なし、`GFX=0` 相当）、同じ VM を
   起動してシリアルログを `runs/ref/` に保存する。ここまでの起動ログを「正解」として使う。
   ビルドできなければ、ユーザーに伝えて M3 に進む。
