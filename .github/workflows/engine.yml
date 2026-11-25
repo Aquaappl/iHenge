@@ -1,0 +1,47 @@
+# Builds the engine for the Mac (build/hengevm) and runs its tests.
+# No Apple firmware is used here: never add a step that downloads or uploads one.
+name: engine
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    # Same image as build-henge.yml (Xcode 27, arm64). The engine runs guest code through
+    # its own JIT, not Hypervisor.framework, so its tests run inside the runner's VM.
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      - name: Install dependencies
+        run: brew install libslirp pkg-config cmake
+
+      - name: Build
+        run: make -j"$(sysctl -n hw.ncpu)" all
+
+      - name: Test
+        run: make test
+
+      - name: Upload hengevm
+        uses: actions/upload-artifact@v4
+        with:
+          name: hengevm-${{ github.sha }}
+          path: |
+            build/hengevm
+            build/hvsparse
+          retention-days: 14
