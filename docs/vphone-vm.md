@@ -50,6 +50,10 @@ V=~/vphone-vms/iphone16pro-henge
 Refresh the clone's writable files from the original before a run when a clean start matters
 (`cp -c Disk.img nvram.bin SEPStorage` after removing the clone's copies).
 
+M7 (2026-11-26): the same command plus `--display 1206x2622` reaches the lock screen in about four
+minutes, drawn by `pvg_lite` + Metal (the iPhone's path). `HV_PVG_SHOT=runs/henge/shots/p
+HV_PVG_SHOT_SECS=20` saves the display as PNGs; `HENGE_GXF_LOG=1` logs every GL1 entry and exit.
+
 M4 (2026-11-26): with the SEP, OpenAVB finishes `SEP bootstrap complete`, iBoot runs to
 `End of iBoot serial output`, and the next stage stops at `GENTER` (M5). The SEP's own UART lines,
 if any, start with `[sep] `.

@@ -233,12 +233,18 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
   （OpenAVB は SEP とのやりとりが終わるまで iLLB を読まないので、M6 の前半（SEP コアと OpenSEP）を
   先にやった。iBoot の出力はリファレンスと同じで最後まで出る。その後 SPTM の入り口の `GENTER` で
   未定義命令になる → M5。Apple 独自レジスタの一覧は `docs/vresearch101-sysregs.md`）
-- [ ] **M5 GXF**：SPTM と TXM が起動し、XNU のログが出始める。
+- [x] **M5 GXF**：SPTM と TXM が起動し、XNU のログが出始める。
   （GXF の単体テストを `tests/` に足す：GENTER → ガード中の MRS/MSR → GEXIT）
-- [ ] **M6 SEP**：OpenSEP → sepOS が起動し、AP の `AppleSEPManager` とメールボックスで話せる。
-  （前半は済み：SEP は 2 台目の `HvMachine`（`--sep-rom`, `--sep-storage`）。OpenSEP と OpenAVB の
-  やりとりで `SEP bootstrap complete` まで進む。SEP は WFE で眠る（`wfe_sleep`）。残りは sepOS 以降）
-- [ ] **M7 ユーザーランド**：launchd が動き、SpringBoard が表示される（Mac の GPU 経路で）。
+  （2026-11-26。`tests/test_gxf.c`。GL1 は TLB の 4 番目の表、ガード中のブロックは分岐キャッシュに
+  入れない。CPU_ON で起こすコアは FP を有効にしておく（でないと "cpu 1 failed to boot"）。
+  `HENGE_GXF_LOG=1` で出入りのログ）
+- [x] **M6 SEP**：OpenSEP → sepOS が起動し、AP の `AppleSEPManager` とメールボックスで話せる。
+  （SEP は 2 台目の `HvMachine`（`--sep-rom`, `--sep-storage`）で GXF も持つ。ログに
+  `AppleSEPManager ... SEP/OS is alive`、FIPS reseed completed。SEP は WFE で眠る（`wfe_sleep`））
+- [x] **M7 ユーザーランド**：launchd が動き、SpringBoard が表示される（Mac の GPU 経路で）。
+  （2026-11-26。Mac の PVG フレームワークではなく、iPhone と同じ `pvg_lite` + Metal の経路
+  （`--no-pvg --display 1206x2622`）でロック画面が出た。`HV_PVG_SHOT=prefix` で PNG を保存できる。
+  時計がホストの時刻と合っていない（RTC かタイムゾーン、未調査））
 - [ ] **M8 タッチ**：タップとスクロールが効く。
 - [ ] **M9 iPhone**：IPA に組み込み、iPhone 13 mini で起動する（`pvg_lite` の経路）。
   IPA は GitHub Actions の `Build Henge IPA` で作る（下の「GitHub Actions」）。
