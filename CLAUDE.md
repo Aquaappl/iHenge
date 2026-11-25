@@ -9,6 +9,8 @@ Henge（iPhone 上で macOS を動かす JIT エミュレーター）に、vphon
 （`vresearch101` プラットフォーム、`vphone600ap` の iOS 26/27）を起動するモードを足す。
 最終的には iPhone 上の Henge アプリで iOS を起動する。
 開発と検証は、手元の M1 Mac mini（8 GB / 256 GB）で `hengevm` を動かして行う。
+**最終的に動かす端末は iPhone 13 mini**（A15、RAM 4 GB）。Henge の要件（A14 以降）は満たすが、
+RAM が少ないのが一番の制約（下の「iPhone 13 mini の制約」）。
 
 ## 決まっている方針（理由つき）
 
@@ -194,6 +196,19 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
 - vphone-linux では GPU の MMIO は `0x30200000`（SPI `0x11`）と IOSurface マッパー
   `0x30210000`（SPI `0x10`）。Henge の vmapple と同じはず。
 
+## iPhone 13 mini の制約
+
+- **RAM 4 GB**。アプリが使える量はそれより少ない。macOS 用の Henge は 4/6/8 GB をゲストに渡すが、
+  13 mini では 4 GB でも無理。増量メモリのエンタイトルメントがないと、Henge はゲストの RAM を
+  ファイルに置く方式に切り替わる（`.github/workflows/build-henge.yml` の冒頭コメント）。
+  遅くなるが、動く可能性はある。
+- そのため、**ゲストの RAM をどこまで減らせるか**を早めに測る。Mac で `hengevm` を 4 GB → 3 GB →
+  2 GB と下げて、iOS がどこまで起動するか記録する（M7 の後でよい）。vphone-cli 側も
+  `vm config --memory` で同じ値にして比べる。
+- 同時に、ゲスト以外のメモリ（JIT 領域、翻訳ブロック、TLB、SEP 用の 2 つ目の `HvMachine`）も
+  13 mini 向けに小さくできるか確認する。`HvCpu` は TLB だけで 1 コア 2 MB 以上ある。
+- vCPU は少なめ（2〜4）で試す。
+
 ## マイルストーン
 
 各マイルストーンの「完了の条件」を満たしたら、このファイルのチェックを付けてコミットする。
@@ -214,7 +229,8 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
 - [ ] **M6 SEP**：OpenSEP → sepOS が起動し、AP の `AppleSEPManager` とメールボックスで話せる。
 - [ ] **M7 ユーザーランド**：launchd が動き、SpringBoard が表示される（Mac の GPU 経路で）。
 - [ ] **M8 タッチ**：タップとスクロールが効く。
-- [ ] **M9 iPhone**：`make ios-lib` と IPA に組み込み、iPhone で起動する（`pvg_lite` の経路）。
+- [ ] **M9 iPhone**：IPA に組み込み、iPhone 13 mini で起動する（`pvg_lite` の経路）。
+  IPA は GitHub Actions の `Build Henge IPA` で作る（下の「GitHub Actions」）。
 
 ## デバッグのやり方
 
@@ -227,17 +243,21 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
   `docs/vresearch101-sysregs.md` に貯める。
 - 起動が遅い場所は、qemu-vphone の TCG での時間（vphone-linux の `docs/PERFORMANCE.md`）と比べる。
 
-## GitHub Actions
+## GitHub Actions（ビルドはここで行う）
 
-- macOS ランナーで `make` と `make test` を回すワークフローを作る（ハイパーバイザーを使わないので
-  ランナーの中でも動くはず）。ファームウェアを使うテストは CI に入れない。
-- iPhone 用 IPA のビルドは、作者の別プロジェクト Husk のビルドが前提（`README.md` の Building）。
-  Actions 化は M9 の後でいい。
+- `.github/workflows/engine.yml`：main への push ごとに、`xcode-27` ランナーで `make` と
+  `make test` を回し、`hengevm` を成果物にする（約 2 分）。ハイパーバイザーを使わないので
+  ランナーの中で動く。**コミットしたら、このワークフローが通ることを確認する**。
+- `.github/workflows/build-henge.yml`：手動実行（Actions タブ → Build Henge IPA → Run workflow）で
+  Husk の iOS 依存と IPA を作る（約 6 分）。失敗すると「Show build errors in context」に
+  エラーの出どころが出る。
+- ファームウェアを使うテストは CI に入れない。
 
 ## わかっていないこと（見つけたらここに書き足す）
 
 - M1 Mac mini で vphone-cli が動くか（公式に記載なし）。
 - iOS ゲストで `WKdmC/WKdmD` などの Apple 独自命令が使われるか。
 - `HvMachine` を 2 つ同時に動かせるか（監査が必要）。
-- iOS ゲストが 4 GB の RAM で起動するか（iPhone のアプリのメモリ上限）。
+- iOS ゲストが何 GB の RAM まで減らして起動するか（13 mini は RAM 4 GB）。
+- 13 mini の iOS のバージョンと、JIT を有効にする手段（StikDebug など）。
 - Henge の `pvg_lite` が iOS ゲストの準仮想化 GPU のコマンドをそのまま再生できるか。
