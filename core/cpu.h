@@ -172,6 +172,16 @@ typedef struct HvCpu {
     int off;                 /* PSCI: powered off (a secondary not started yet, or CPU_OFF) until CPU_ON */
     int parked_off;          /* off, and its thread is waiting (so CPU_ON may reset it) */
     uint64_t impdef[8][16][8]; /* Apple's S3_<op1>_C15_<crm>_<op2> as written, with m->impdef_store */
+    /* Apple's GXF (m->gxf, the M1 layout vresearch101 has): guarded levels GL1 (SPTM) and GL0 (TXM). */
+    int gl;                    /* the current EL is guarded: gxf_status[el] */
+    uint8_t gxf_status[2];     /* GXF_STATUS bit 0, for EL0 and EL1 */
+    uint64_t gxf_config, gxf_enter, gxf_abort;
+    uint64_t aspsr_gl1, sp_gl1, tpidr_gl1, vbar_gl1, spsr_gl1, esr_gl1, elr_gl1, far_gl1;
+    uint64_t sprr_config[2];   /* SPRR_CONFIG_EL0, _EL1 (bit 0 of EL1's enables SPRR at EL0 too) */
+    uint64_t sprr_perm[2];     /* the permission tables: EL0 (S3_6_C15_C1_5), EL1 (S3_6_C15_C1_6) */
+    uint64_t sprr_el1br0;      /* S3_6_C15_C1_7 */
+    uint64_t sprr_umask;       /* S3_6_C15_C3_0: which EL0 permissions EL0 may change itself */
+    uint64_t mprr[4], mprr_c3_5;
 } HvCpu;
 
 #define HV_CPU_X(n)        ((n) * 8)
@@ -292,9 +302,10 @@ enum {
 #define HV_PSTATE_F      (1u << 6)
 #define HV_PSTATE_PAN    (1u << 22)
 
-/* Which TLB table accesses at this EL use (EL0 for LDTR/STTR). */
+/* Which TLB table accesses at this EL use (EL0 for LDTR/STTR). GL1 has the fourth one;
+   GL0 shares EL0's, which is emptied when the CPU goes between them. */
 static inline int hv_tlb_table(const HvCpu *cpu, int el) {
-    return el == 0 ? 0 : (cpu->pstate_extra & HV_PSTATE_PAN) ? 2 : 1;
+    return el == 0 ? 0 : cpu->gl ? 3 : (cpu->pstate_extra & HV_PSTATE_PAN) ? 2 : 1;
 }
 
 /* Where slot `slot` of TLB table `table` is in cpu->tlb. The old layout keeps a slot's four tables side by side, so a

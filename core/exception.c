@@ -19,12 +19,18 @@ uint64_t hv_pstate_get(HvCpu *cpu) {
            (uint64_t)cpu->el << 2 | (cpu->el ? cpu->spsel : 0);
 }
 
+/* Where the SP in use belongs: SP_EL0, SP_EL1, or SP_GL1 when EL1 is guarded (GL0 uses SP_EL0). */
+static uint64_t *sp_bank(HvCpu *cpu) {
+    if (cpu->el == 0 || cpu->spsel == 0) return &cpu->sp_el0;
+    return cpu->gl ? &cpu->sp_gl1 : &cpu->sp_el1;
+}
+
 void hv_sp_switch(HvCpu *cpu, uint32_t el, uint32_t spsel) {
-    if (cpu->el == 0 || cpu->spsel == 0) cpu->sp_el0 = cpu->sp;
-    else cpu->sp_el1 = cpu->sp;
+    *sp_bank(cpu) = cpu->sp;
     cpu->el = el;
     cpu->spsel = el ? spsel : 0;
-    cpu->sp = cpu->spsel ? cpu->sp_el1 : cpu->sp_el0;
+    cpu->gl = cpu->gxf_status[el & 1] & 1;
+    cpu->sp = *sp_bank(cpu);
 }
 
 static void set_extra(HvCpu *cpu, uint64_t extra) {
@@ -56,10 +62,13 @@ void hv_take_exception(HvCpu *cpu, int type, uint32_t esr, uint64_t far, int set
         fprintf(stderr, "exception type %d esr %08x far %llx from pc %llx el%u\n", type, esr, (unsigned long long)far,
                 (unsigned long long)ret, cpu->el);
     uint64_t offset = cpu->el == 0 ? 0x400 : cpu->spsel ? 0x200 : 0x000;
-    cpu->spsr_el1 = spsr;
-    cpu->elr_el1 = ret;
-    if (type == HV_EXC_SYNC || type == HV_EXC_SERROR) cpu->esr_el1 = esr;
-    if (set_far) cpu->far_el1 = far;
+    /* From a guarded level (GL1, or GL0 in the M1 layout): GL1's vector and registers. */
+    int from_gl = cpu->gl;
+    *(from_gl ? &cpu->spsr_gl1 : &cpu->spsr_el1) = spsr;
+    *(from_gl ? &cpu->elr_gl1 : &cpu->elr_el1) = ret;
+    if (type == HV_EXC_SYNC || type == HV_EXC_SERROR) *(from_gl ? &cpu->esr_gl1 : &cpu->esr_el1) = esr;
+    if (set_far) *(from_gl ? &cpu->far_gl1 : &cpu->far_el1) = far;
+    if (from_gl && cpu->m->gxf_log) hv_gxf_log(cpu, "exception", ret);
     hv_sp_switch(cpu, 1, 1);
     cpu->daif = HV_PSTATE_DAIF;
     uint64_t extra = cpu->pstate_extra;
@@ -68,8 +77,72 @@ void hv_take_exception(HvCpu *cpu, int type, uint32_t esr, uint64_t far, int set
     if ((cpu->sctlr_el1 >> 44) & 1) extra |= 1ull << 12;      /* SSBS from DSSBS */
     set_extra(cpu, extra);
     cpu->excl_addr = ~0ull;
-    cpu->pc = (cpu->vbar_el1 & ~0x7ffull) + offset + (uint64_t)type * 0x80;
+    cpu->pc = ((from_gl ? cpu->vbar_gl1 : cpu->vbar_el1) & ~0x7ffull) + offset + (uint64_t)type * 0x80;
     cpu->exit_reason = HV_EXIT_EXCEPTION;
+}
+
+/* GXF. The M1 layout: GL1 has its own SP, VBAR and exception registers (ELR,
+   SPSR, ESR, FAR); the EL1 names still reach the EL1 ones while guarded. */
+
+void hv_gxf_log(HvCpu *cpu, const char *what, uint64_t pc) {
+    fprintf(stderr, "gxf: %s cpu%u pc=%016llx el%u gl%d elr_gl=%016llx spsr_gl=%08llx esr_gl=%08llx aspsr=%llx "
+                    "x0=%016llx x1=%016llx sp=%016llx\n",
+            what, cpu->index, (unsigned long long)pc, cpu->el, cpu->gl, (unsigned long long)cpu->elr_gl1,
+            (unsigned long long)cpu->spsr_gl1, (unsigned long long)cpu->esr_gl1, (unsigned long long)cpu->aspsr_gl1,
+            (unsigned long long)cpu->x[0], (unsigned long long)cpu->x[1], (unsigned long long)cpu->sp);
+}
+
+/* Into GL1 at vector, as GENTER and a GXF abort do: ELR_GL1, SPSR_GL1 and ESR_GL1 take the old state. */
+static void enter_gl1(HvCpu *cpu, uint64_t ret, uint32_t esr, uint64_t vector) {
+    cpu->spsr_gl1 = hv_pstate_get(cpu);
+    cpu->elr_gl1 = ret;
+    cpu->esr_gl1 = esr;
+    *sp_bank(cpu) = cpu->sp;
+    cpu->gxf_status[1] = 1;
+    cpu->el = 1;
+    cpu->spsel = 1;
+    cpu->gl = 1;
+    cpu->sp = cpu->sp_gl1;
+    cpu->daif = HV_PSTATE_DAIF;
+    uint64_t extra = cpu->pstate_extra;
+    if (!((cpu->sctlr_el1 >> 23) & 1)) extra |= HV_PSTATE_PAN;
+    extra &= ~(1ull << 12);
+    if ((cpu->sctlr_el1 >> 44) & 1) extra |= 1ull << 12;
+    set_extra(cpu, extra);
+    cpu->excl_addr = ~0ull;
+    cpu->pc = vector;
+    cpu->exit_reason = HV_EXIT_EXCEPTION;
+}
+
+/* GENTER #imm at pc (EL1, not guarded): into GL1 at GXF_ENTER_EL1. */
+void hv_gxf_genter(HvCpu *cpu, uint64_t pc, uint32_t imm) {
+    if (cpu->m->gxf_log) hv_gxf_log(cpu, "enter", pc);
+    enter_gl1(cpu, pc + 4, 0x3fu << 26 | 1u << 25 | 1u << 16 | (imm & 0xffff), cpu->gxf_enter);
+}
+
+/* An instruction fetch EL1 may not make but GL1 may: into GL1 at GXF_ABORT_EL1. */
+void hv_gxf_abort(HvCpu *cpu, uint64_t pc, uint32_t esr) {
+    if (cpu->m->gxf_log) hv_gxf_log(cpu, "abort", pc);
+    enter_gl1(cpu, pc, esr, cpu->gxf_abort);
+}
+
+/* GEXIT (in GL1): PSTATE from SPSR_GL1 and on at ELR_GL1, still guarded if ASPSR_GL1 bit 0 says so. */
+void hv_gxf_gexit(HvCpu *cpu) {
+    if (cpu->m->gxf_log) hv_gxf_log(cpu, "exit", cpu->pc);
+    uint64_t spsr = cpu->spsr_gl1;
+    *sp_bank(cpu) = cpu->sp;
+    cpu->gxf_status[1] = cpu->aspsr_gl1 & 1;
+    cpu->nzcv = spsr & 0xf0000000;
+    cpu->daif = spsr & HV_PSTATE_DAIF;
+    set_extra(cpu, spsr & PSTATE_EXTRA_MASK);
+    uint32_t m = spsr & 0x1f, el = (m >> 2) & 3;
+    if ((m & 0x10) || el > 1) el = 1;
+    cpu->el = el;
+    cpu->spsel = el ? m & 1 : 0;
+    cpu->gl = cpu->gxf_status[el] & 1;
+    cpu->sp = *sp_bank(cpu);
+    cpu->pc = cpu->elr_gl1;
+    cpu->excl_addr = ~0ull;
 }
 
 void hv_raise_sync(HvCpu *cpu, uint32_t ec, uint32_t iss, uint64_t far, uint64_t pc) {
@@ -111,14 +184,23 @@ void hv_raise_abort(HvCpu *cpu, int insn, uint64_t va, uint32_t fsc, int wnr, in
 }
 
 void hv_eret(HvCpu *cpu) {
+    int from_gl = cpu->gl;
+    uint64_t elr = from_gl ? cpu->elr_gl1 : cpu->elr_el1, spsr = from_gl ? cpu->spsr_gl1 : cpu->spsr_el1;
     if (cpu->m) {
         HvStats *st = &cpu->m->stats;
         uint32_t k = st->nelchg++ & 15;
-        st->elchg[k].from = cpu->pc, st->elchg[k].to = cpu->elr_el1, st->elchg[k].spsr = cpu->spsr_el1;
+        st->elchg[k].from = cpu->pc, st->elchg[k].to = elr, st->elchg[k].spsr = spsr;
         st->elchg[k].kind = 9, st->elchg[k].el = cpu->el;
     }
-    cpu->pc = cpu->elr_el1;
-    hv_pstate_set(cpu, cpu->spsr_el1);
+    /* M1-layout GXF: an ERET from a guarded level to EL0 enters GL0 (TXM), any other one to EL0 leaves it.
+       EL0's TLB table serves both, so it is emptied when that changes. */
+    if (cpu->m && cpu->m->gxf && ((spsr >> 2) & 3) == 0 && !(spsr & 0x10) && cpu->gxf_status[0] != from_gl) {
+        cpu->gxf_status[0] = (uint8_t)from_gl;
+        hv_tlb_flush_user(cpu);
+        if (cpu->m->gxf_log) hv_gxf_log(cpu, from_gl ? "eret into gl0" : "eret out of gl0", cpu->pc);
+    }
+    cpu->pc = elr;
+    hv_pstate_set(cpu, spsr);
     cpu->excl_addr = ~0ull;
 }
 

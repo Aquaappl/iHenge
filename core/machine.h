@@ -57,6 +57,12 @@ typedef struct HvBlock {
 #define HV_BLOCK_FPOFF 2u        /* CPACR_EL1.FPEN traps FP/SIMD at this EL */
 #define HV_BLOCK_SPX   4u        /* EL1 with SPSel = 1 (SP_EL1 in use, SP_EL0 banked) */
 #define HV_BLOCK_PAN   8u        /* EL1 with PSTATE.PAN set (selects TLB table 2) */
+#define HV_BLOCK_GUARDED 16u     /* GXF: GL1 (selects TLB table 3) or GL0; such blocks keep out of the branch caches */
+
+/* The TLB table a block's accesses use (hv_tlb_table for the state it was translated for). */
+static inline int hv_block_tlb_table(uint32_t flags) {
+    return !(flags & HV_BLOCK_EL1) ? 0 : (flags & HV_BLOCK_GUARDED) ? 3 : (flags & HV_BLOCK_PAN) ? 2 : 1;
+}
 
 #define HV_MAX_RAM 8
 #define HV_MAX_MMIO 48
@@ -260,6 +266,8 @@ typedef struct HvMachine {
     /* Apple's implementation-defined registers (op0 3, CRn 15) keep what is written (HvCpu.impdef), each
        logged the first time it is used; off: they read 0, writes are ignored, every access logged. */
     int impdef_store;
+    int gxf;                 /* Apple's GXF and SPRR (GENTER/GEXIT, guarded levels, permission tables) */
+    int gxf_log;             /* HENGE_GXF_LOG: log guarded entries and exits */
     uint8_t impdef_seen[8 * 16 * 8 / 8];
     uint64_t *slots;         /* chainable exits' targets (0: not chained) */
     uint32_t **slot_site;    /* the B in each exit's stub that chaining rewrites to jump to the target */

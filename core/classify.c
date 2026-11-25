@@ -89,6 +89,8 @@ static HvInsnKind classify_dp_register(uint32_t insn) {
 
 HvInsnKind hv_classify(uint32_t insn) {
     uint32_t op0 = (insn >> 25) & 0xf;
+    /* GENTER 0x00201420 (#imm in bits 4:0), GEXIT 0x00201400: Apple's, in the reserved space. */
+    if ((insn & 0xffffffc0) == 0x00201400) return HV_INSN_APPLE;
     /* 00xx: UDF and SME (0000), SVE (0010), unallocated. None are exposed to the guest. */
     if ((op0 & 0xc) == 0x0) return HV_INSN_UNDEFINED;
     if ((op0 & 0xe) == 0x8) {                   /* 100x: data processing, immediate */
@@ -119,6 +121,7 @@ const char *hv_insn_kind_name(HvInsnKind kind) {
     case HV_INSN_WAIT: return "wait";
     case HV_INSN_PAC: return "pac";
     case HV_INSN_UNDEFINED: return "undefined";
+    case HV_INSN_APPLE: return "apple";
     }
     return "?";
 }

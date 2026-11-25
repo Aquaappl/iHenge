@@ -20,6 +20,7 @@ typedef enum {
     HV_INSN_WAIT,        /* WFI, WFE, WFIT, WFET */
     HV_INSN_PAC,         /* PAC*, AUT*, XPAC*, PACGA: strip or no-op */
     HV_INSN_UNDEFINED,
+    HV_INSN_APPLE,       /* GENTER, GEXIT (Apple GXF): a helper decides, by machine and state */
 } HvInsnKind;
 
 HvInsnKind hv_classify(uint32_t insn);

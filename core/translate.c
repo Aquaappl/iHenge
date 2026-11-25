@@ -371,7 +371,7 @@ static uint64_t cross_addend(Emit *e, uint64_t target) {
     HvCpu *cpu = hv_self;
     if (off || !cpu || e->no_ijc || !e->m->chain) return 0;
     /* This CPU's TLB first: an entry there is the mapping now. */
-    int table = !(e->flags & HV_BLOCK_EL1) ? 0 : (e->flags & HV_BLOCK_PAN) ? 2 : 1;
+    int table = hv_block_tlb_table(e->flags);
     const HvTlbEntry *te = hv_tlb_ent(cpu, (target >> HV_TLB_PAGE_BITS) & (HV_TLB_SIZE - 1), table);
     uint64_t tpage = target & ~((1ull << HV_TLB_PAGE_BITS) - 1);
     if (te->exec_tag == hv_exec_key(tpage, te->addend)) return (uint64_t)te->addend;
@@ -425,7 +425,7 @@ static void put_branch_exit(Emit *e, uint64_t target, int plain) {
     uint32_t to_miss = ~0u;
     if (xa) {
         /* The target page's fetch tag: its VA and addend, against what they were. */
-        int table = !(e->flags & HV_BLOCK_EL1) ? 0 : (e->flags & HV_BLOCK_PAN) ? 2 : 1;
+        int table = hv_block_tlb_table(e->flags);
         uint32_t off = HV_CPU_TLB + hv_tlb_code((uint32_t)(target >> HV_TLB_PAGE_BITS) & (HV_TLB_SIZE - 1), table) * (uint32_t)sizeof(HvTlbEntry) + 16;
         put(e, 0x91400000u | (off >> 12) << 10 | 28 << 5 | 7);  /* add x7, x28, #off & ~0xfff */
         put(e, LDR_X(7, 7, off & 0xfff));
@@ -997,7 +997,7 @@ static void translate_mem(Emit *e, uint32_t insn, uint64_t pc) {
         role = e->grole[e->cur_i];
         grp = &e->grp[e->gid[e->cur_i]];
     }
-    int g_el = op.unpriv || !(e->flags & HV_BLOCK_EL1) ? 0 : (e->flags & HV_BLOCK_PAN) ? 2 : 1;
+    int g_el = op.unpriv ? 0 : hv_block_tlb_table(e->flags);
     if (role == 1) {
         /* The whole range: A = base + lo, then the usual check for hi - lo bytes. */
         int64_t lo = grp->lo, len = grp->hi - grp->lo;
@@ -1227,7 +1227,7 @@ static void translate_ic_ivau(Emit *e, uint32_t insn, uint64_t pc) {
     spill(e, s, 3);
     if (is_stolen(rt)) put(e, LDR_X(A, 28, slot_of(rt)));
     else put(e, MOV_X(A, rt)); /* rt 31 is XZR here */
-    int el_idx = (e->flags & HV_BLOCK_PAN) ? 2 : 1;
+    int el_idx = hv_block_tlb_table(e->flags);
     uint32_t tlb = put_tlb_slot(e, T, A, el_idx);
     put(e, LDR_X(U, T, tlb + 0)); /* read tag */
     put(e, SUB_X(U, A, U));
@@ -1263,7 +1263,7 @@ static void translate_dc_zva(Emit *e, uint32_t insn, uint64_t pc) {
     if (is_stolen(rt)) put(e, LDR_X(A, 28, slot_of(rt)));
     else put(e, MOV_X(A, rt)); /* rt 31 is XZR here */
     put(e, 0x92400000u | 58u << 16 | 57u << 10 | A << 5 | A); /* and A, A, #~63 */
-    int el_idx = !(e->flags & HV_BLOCK_EL1) ? 0 : (e->flags & HV_BLOCK_PAN) ? 2 : 1;
+    int el_idx = hv_block_tlb_table(e->flags);
     uint32_t tlb = put_tlb_slot(e, T, A, el_idx);
     put(e, LDR_X(U, T, tlb + 8)); /* write tag */
     put(e, SUB_X(U, A, U));
@@ -1738,6 +1738,10 @@ static int translate_one(Emit *e, uint32_t insn, uint64_t pc) {
         put_helper(e, pc, insn, HV_OP_UNDEF);
         put_exit(e, pc + 4);
         return 1;
+    case HV_INSN_APPLE:
+        put_helper(e, pc, insn, HV_OP_APPLE);
+        put_exit(e, pc + 4);
+        return 1;
     }
     return 1;
 }
@@ -1961,7 +1965,7 @@ static int translate_emit(HvMachine *m, HvBlock *b, const uint32_t *code, uint32
     e->flags = b->flags;
     e->slow_mem = m->slow_mem || hv_knob[HV_K_PREDSTAT]; /* HV_PREDSTAT (measuring): every access through hv_mem_emulate */
     e->page = b->va & ~((1ull << HV_TLB_PAGE_BITS) - 1);
-    e->no_ijc = !m->chain;
+    e->no_ijc = !m->chain || (b->flags & HV_BLOCK_GUARDED); /* guarded code stays out of the branch caches */
     e->m = m;
     e->nogroup = nogroup;
     e->u_live = e->u_prev = 0;

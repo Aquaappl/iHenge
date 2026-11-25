@@ -18,6 +18,7 @@ typedef struct HvWalk {
     uint64_t block_size; /* size of the mapping that was found */
     uint8_t r, w, x;     /* permissions at the EL that was asked about */
     uint8_t attr;        /* MAIR attribute byte */
+    uint8_t gl_x;        /* SPRR: GL1 could execute it (a fetch EL1 may not make is then a GXF abort) */
 } HvWalk;
 
 /* Fault status codes (ESR ISS DFSC/IFSC). */

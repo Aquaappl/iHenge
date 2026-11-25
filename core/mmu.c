@@ -34,6 +34,32 @@ static int read_desc(HvMachine *m, uint64_t pa, uint64_t *out) {
     return 0;
 }
 
+/* SPRR, the M1 layout (qemu-vphone's ptw.c): the leaf's AP[2:1], UXN and PXN are an
+   index, (ap << 2) | (uxn << 1) | pxn, into the EL's permission table, 4 bits an
+   index: bits 1:0 what the EL may do, 3:2 what its guarded level may. They replace
+   AP, PAN and "EL0-writable is not EL1-executable"; table-level XN still takes away
+   execute. The view is guarded when the access is at the CPU's EL and it is guarded. */
+static int sprr_view(uint64_t attr, int guarded) {
+    enum { R = 4, W = 2, X = 1 };
+    uint64_t gl = attr >> 2, el = attr & 3;
+    if (guarded) return gl == 0 ? 0 : gl == 1 ? R | X : gl == 2 ? R : R | W;
+    if (el == 1) return gl == 2 ? X : R | X;
+    if (el == 2) return R;
+    if (el == 3) return gl == 1 ? 0 : R | W; /* no R/W at EL where its GL has RX */
+    return 0;
+}
+
+static void sprr_perms(HvCpu *cpu, uint64_t desc, int el, int uxn_table, int pxn_table, HvWalk *out) {
+    int ap = (desc >> 6) & 3, uxn = (desc >> 54) & 1, pxn = (desc >> 53) & 1;
+    uint64_t attr = (cpu->sprr_perm[el ? 1 : 0] >> (((ap << 2) | (uxn << 1) | pxn) * 4)) & 15;
+    int table_xn = (uxn_table && !uxn) || (pxn_table && !pxn);
+    int p = sprr_view(attr, cpu->gl && el == (int)cpu->el);
+    out->r = (p & 4) != 0;
+    out->w = (p & 2) != 0;
+    out->x = (p & 1) && !table_xn;
+    out->gl_x = el == 1 && (sprr_view(attr, 1) & 1) && !table_xn;
+}
+
 void hv_mmu_walk(HvCpu *cpu, uint64_t va, HvAccess acc, int el, HvWalk *out) {
     *out = (HvWalk){0};
     uint64_t sctlr = cpu->sctlr_el1;
@@ -115,6 +141,13 @@ void hv_mmu_walk(HvCpu *cpu, uint64_t va, HvAccess acc, int el, HvWalk *out) {
             return;
         }
         int ap = (desc >> 6) & 3;
+        if (cpu->m->gxf && (cpu->sprr_config[1] & 1)) { /* SPRR on (EL1's switch governs EL0 too) */
+            sprr_perms(cpu, desc, el, uxn_table, pxn_table, out);
+            if ((sctlr >> 19) & 1 && out->w) out->x = 0; /* WXN */
+            int ok = acc == HV_ACC_READ ? out->r : acc == HV_ACC_WRITE ? out->w : out->x;
+            if (!ok) out->fsc = HV_FSC_PERMISSION(level);
+            return;
+        }
         int uxn = ((desc >> 54) & 1) | uxn_table;
         int pxn = ((desc >> 53) & 1) | pxn_table;
         int el0_access = (ap & 1) && !(ap_table & 1);
@@ -877,6 +910,7 @@ int hv_tlb_refill(HvCpu *cpu, uint64_t va, uint32_t flags) {
 /* Put block b in this CPU's indirect-branch cache under its VA (b->va must be in
    the half its flags say: kernel blocks, kernel VAs). */
 void hv_ijc_fill(HvCpu *cpu, HvBlock *b) {
+    if (b->flags & HV_BLOCK_GUARDED) return; /* guarded code stays out of the branch caches */
     HvMachine *m = cpu->m;
     HvPerCpu *pcs = cpu->pc_state;
     int kernel = b->flags & HV_BLOCK_EL1;
@@ -927,7 +961,7 @@ void hv_ijc_fill(HvCpu *cpu, HvBlock *b) {
    flags: the block flags the branch was translated under (the target's too). */
 /* Does this CPU's TLB (the table for flags) map b's page where b came from? */
 static int tlb_maps_block(HvCpu *cpu, const HvBlock *b) {
-    int table = !(b->flags & HV_BLOCK_EL1) ? 0 : (b->flags & HV_BLOCK_PAN) ? 2 : 1;
+    int table = hv_block_tlb_table(b->flags);
     const HvTlbEntry *e = hv_tlb_ent(cpu, (b->va >> HV_TLB_PAGE_BITS) & (HV_TLB_SIZE - 1), table);
     uint64_t page_va = b->va & ~(uint64_t)PAGE_MASK, page_pa = b->pa & ~(uint64_t)PAGE_MASK;
     return __atomic_load_n(&e->exec_tag, __ATOMIC_RELAXED) == hv_exec_key(page_va, e->addend) &&
@@ -1005,8 +1039,9 @@ static void *ijc_resolve(HvCpu *cpu, uint64_t va, uint32_t flags) {
     int kernel = flags & HV_BLOCK_EL1;
 #define FAIL(k) do { if (m->stats_interval) m->stats.light_fail[k]++; return 0; } while (0)
     if (!m->chain || va == m->stop_pc || va == m->stop_pc2 || (int)((va >> 55) & 1) != kernel || (va & 3)) FAIL(0);
+    if (flags & HV_BLOCK_GUARDED) FAIL(0); /* guarded code stays out of the branch caches */
     if (pcs->ijc_keyed_count >= (1u << 17) || pcs->ucode_count + 1 >= (1u << HV_UCODE_BITS) / 2) FAIL(1);
-    int table = !kernel ? 0 : (flags & HV_BLOCK_PAN) ? 2 : 1;
+    int table = hv_block_tlb_table(flags);
     HvTlbEntry *e = hv_tlb_ent(cpu, (va >> HV_TLB_PAGE_BITS) & (HV_TLB_SIZE - 1), table);
     if (e->exec_tag != hv_exec_key(va & ~(uint64_t)PAGE_MASK, e->addend)) {
         /* Not in the TLB (a process switch, or another page took the slot):

@@ -36,6 +36,14 @@ void hv_raise_undef(HvCpu *cpu, uint64_t pc);
 void hv_raise_abort(HvCpu *cpu, int insn, uint64_t va, uint32_t fsc, int wnr, int s1ptw, uint64_t pc);
 void hv_eret(HvCpu *cpu);
 
+/* Apple GXF (m->gxf). GENTER #imm at pc enters GL1 at GXF_ENTER_EL1; GEXIT leaves it
+   (or stays, by ASPSR_GL1); a fetch only GL1 may make enters it at GXF_ABORT_EL1. */
+void hv_gxf_genter(HvCpu *cpu, uint64_t pc, uint32_t imm);
+void hv_gxf_gexit(HvCpu *cpu);
+void hv_gxf_abort(HvCpu *cpu, uint64_t pc, uint32_t esr);
+/* HENGE_GXF_LOG=1: one line per entry and exit, as qemu-vphone's "gxf:" lines. */
+void hv_gxf_log(HvCpu *cpu, const char *what, uint64_t pc);
+
 /* SVC, HVC (PSCI), SMC, BRK, HLT at pc. Returns 1: the block always leaves. */
 int hv_exception_insn(HvCpu *cpu, uint32_t insn, uint64_t pc);
 

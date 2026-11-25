@@ -63,11 +63,72 @@ static int el0_allowed(HvCpu *cpu, uint32_t reg, int write) {
     case R(3, 3, 14, 0, 2): case R(3, 3, 14, 0, 6): return !write && ((k >> 1) & 1); /* CNTVCT */
     case R(3, 3, 14, 3, 0): case R(3, 3, 14, 3, 1): case R(3, 3, 14, 3, 2): return (k >> 8) & 1; /* CNTV_* */
     case R(3, 3, 14, 2, 0): case R(3, 3, 14, 2, 1): case R(3, 3, 14, 2, 2): return (k >> 9) & 1; /* CNTP_* */
+    case R(3, 6, 15, 1, 5): return cpu->m->gxf;                          /* SPRR: EL0's own table (masked writes) */
+    case R(3, 6, 15, 1, 6): return cpu->m->gxf && !write;                /* and EL1's, to read */
     default: return 0;
     }
 }
 
 /* Returns 0 and sets *v, or -1 if the register does not exist. */
+/* GXF and SPRR registers (m->gxf; the M1 encodings, as qemu-vphone defines them for
+   vresearch101). The GL1 ones (S3_6_C15_C10_n) exist only while guarded. Returns a
+   pointer to the storage, NULL if reg is not one of them, or GXF_UNDEF. */
+#define GXF_UNDEF ((uint64_t *)1)
+static uint64_t *gxf_reg(HvCpu *cpu, uint32_t reg) {
+    if (!cpu->m->gxf || (reg >> 14) != 3 || ((reg >> 11) & 7) != 6 || ((reg >> 7) & 15) != 15) return NULL;
+    uint32_t crm = (reg >> 3) & 15, op2 = reg & 7;
+    if (crm == 1) {
+        switch (op2) {
+        case 0: return &cpu->sprr_config[1];
+        case 1: return &cpu->sprr_config[0];
+        case 2: return &cpu->gxf_config;
+        case 5: return &cpu->sprr_perm[0];
+        case 6: return &cpu->sprr_perm[1];
+        case 7: return &cpu->sprr_el1br0;
+        }
+    } else if (crm == 3) {
+        if (op2 == 0) return &cpu->sprr_umask;
+        if (op2 >= 1 && op2 <= 4) return &cpu->mprr[op2 - 1];
+        if (op2 == 5) return &cpu->mprr_c3_5;
+    } else if (crm == 8) {
+        if (op2 == 1) return &cpu->gxf_enter;
+        if (op2 == 2) return &cpu->gxf_abort;
+        if (op2 == 3) return cpu->gl ? &cpu->aspsr_gl1 : GXF_UNDEF; /* ASPSR_GL1, A13 encoding */
+    } else if (crm == 10) {
+        if (!cpu->gl) return GXF_UNDEF;
+        uint64_t *gl1[8] = {&cpu->sp_gl1, &cpu->tpidr_gl1, &cpu->vbar_gl1, &cpu->spsr_gl1,
+                            &cpu->aspsr_gl1, &cpu->esr_gl1, &cpu->elr_gl1, &cpu->far_gl1};
+        return gl1[op2];
+    }
+    return NULL;
+}
+
+/* EL0 writing its own permission table (S3_6_C15_C1_5) changes only what the mask
+   (S3_6_C15_C3_0, two bits per index) allows: 16 indexes of 4 bits, RWX in the low 3. */
+static uint64_t sprr_el0_merge(uint64_t old, uint64_t want, uint64_t mask) {
+    uint64_t r = old;
+    for (int i = 0; i < 16; i++) {
+        uint64_t m = (mask >> (2 * i)) & 3, o = (old >> (4 * i)) & 7, n = (want >> (4 * i)) & 7;
+        uint64_t changed = (o ^ n) & m;
+        uint64_t p = (o & ~changed) | (n & changed);
+        r = (r & ~(7ull << (4 * i))) | p << (4 * i);
+    }
+    return r;
+}
+
+static int gxf_write(HvCpu *cpu, uint32_t reg, uint64_t *g, uint64_t v) {
+    uint64_t old = *g;
+    if (g == &cpu->sprr_perm[0] && cpu->el == 0) v = sprr_el0_merge(old, v, cpu->sprr_umask);
+    *g = v;
+    if (g == &cpu->sprr_perm[1]) cpu->sprr_el1br0 = v; /* the M1 layout: one table for both ranges */
+    if (old == v) return 0;
+    /* Permissions are in TLB entries: the EL0 table's are EL0's, the rest everyone's. */
+    if (g == &cpu->sprr_perm[0]) hv_tlb_flush_user(cpu);
+    else if (g == &cpu->sprr_perm[1] || g == &cpu->sprr_config[0] || g == &cpu->sprr_config[1]) hv_tlb_flush(cpu);
+    (void)reg;
+    return 0;
+}
+
 /* An Apple implementation-defined register's storage (op0 3, CRn 15), logging
    the machine's first use of each one with the guest PC, as qemu-vphone does. */
 static uint64_t *impdef_slot(HvCpu *cpu, uint32_t reg, const char *how) {
@@ -171,6 +232,16 @@ static int read_reg(HvCpu *cpu, uint32_t reg, uint64_t *v) {
        kernel reads error-status registers there (S3_6_C15_C0_0, S3_3_C15_C8_0..)
        when it reports a machine error; zero means no error recorded. */
     if ((reg >> 14) == 3 && ((reg >> 7) & 15) == 15) {
+        if (m->gxf && reg == R(3, 6, 15, 8, 0)) { /* GXF_STATUS_EL1 */
+            *v = cpu->gxf_status[1];
+            return 0;
+        }
+        uint64_t *g = gxf_reg(cpu, reg);
+        if (g == GXF_UNDEF) return -1;
+        if (g) {
+            *v = *g;
+            return 0;
+        }
         if (m->impdef_store) {
             *v = *impdef_slot(cpu, reg, "read");
             return 0;
@@ -284,6 +355,10 @@ other:
     if ((reg >> 14) == 2 || (((reg >> 7) & 15) == 9 && (reg >> 14) == 3)) return 0;
     /* Apple implementation-defined registers (op0 3, CRn 15): ignored, see read_reg. */
     if ((reg >> 14) == 3 && ((reg >> 7) & 15) == 15) {
+        if (m->gxf && reg == R(3, 6, 15, 8, 0)) return 0; /* GXF_STATUS_EL1: read-only */
+        uint64_t *g = gxf_reg(cpu, reg);
+        if (g == GXF_UNDEF) return -1;
+        if (g) return gxf_write(cpu, reg, g, v);
         if (m->impdef_store) {
             *impdef_slot(cpu, reg, "write") = v;
             return 0;

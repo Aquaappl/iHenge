@@ -25,6 +25,8 @@ static void ctrr_write(void *opaque, uint64_t off, uint64_t v, unsigned size) {
 int hv_vresearch101_add(HvVmapple *b) {
     HvVresearch101 *v = &b->vr;
     b->m->impdef_store = 1;
+    b->m->gxf = 1;
+    b->m->gxf_log = getenv("HENGE_GXF_LOG") != NULL;
     v->scratch = mmap(NULL, VRESEARCH_SCRATCH_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (v->scratch == MAP_FAILED) {
         v->scratch = NULL;
@@ -99,6 +101,8 @@ int hv_vresearch101_add_sep(HvVmapple *b, HvMachine *sep_m, HvCpu *sep_cpu, cons
     sep_m->log = ap->log;
     sep_m->wfe_sleep = 1; /* OpenSEP waits for the mailbox in WFE */
     sep_m->impdef_store = 1;
+    sep_m->gxf = 1;
+    sep_m->gxf_log = ap->gxf_log;
 
     /* The AP's memory, the same host pages; then the SEP's own. */
     for (int i = 0; i < ap->nram; i++)

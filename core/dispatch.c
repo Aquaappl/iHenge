@@ -85,6 +85,7 @@ static uint32_t block_flags(HvCpu *cpu) {
     uint32_t flags = cpu->el ? HV_BLOCK_EL1 : 0;
     if (cpu->el && cpu->spsel) flags |= HV_BLOCK_SPX;
     if (cpu->el && (cpu->pstate_extra & HV_PSTATE_PAN)) flags |= HV_BLOCK_PAN;
+    if (cpu->gl) flags |= HV_BLOCK_GUARDED;
     uint32_t fpen = (cpu->cpacr_el1 >> 20) & 3;
     if (fpen == 0 || fpen == 2 || (fpen == 1 && cpu->el == 0)) flags |= HV_BLOCK_FPOFF;
     return flags;
@@ -290,6 +291,7 @@ static void *fast_resume(HvCpu *cpu) {
     if ((p->irq_line && !(cpu->daif & HV_PSTATE_I)) || (p->fiq_line && !(cpu->daif & HV_PSTATE_F))) { if (m->stats_interval) m->stats.fr_fail[2]++; return NULL; }
     if (cpu->timer_due && mach_absolute_time() >= cpu->timer_due) { if (m->stats_interval) m->stats.fr_fail[3]++; return NULL; }
     uint32_t flags = block_flags(cpu);
+    if (flags & HV_BLOCK_GUARDED) return NULL; /* its blocks are not in the branch cache (a normal one at the VA may be) */
     int kernel = flags & HV_BLOCK_EL1;
     uint64_t va = cpu->pc;
     if ((int)((va >> 55) & 1) != kernel || (va & 3)) return NULL;
@@ -408,6 +410,16 @@ static uint32_t helper(HvCpu *cpu, const HvHelperInfo *info_in) {
             return 1;
         }
         return wfe(cpu);
+    case HV_OP_APPLE: { /* GENTER (Rn 1, #imm in Rd) and GEXIT (Rn 0): EL1, with GXF, and entering or leaving GL1 */
+        int genter = (info->insn >> 5) & 1;
+        if (!cpu->m->gxf || cpu->el != 1 || cpu->gl == genter) {
+            hv_raise_undef(cpu, info->pc);
+            return 1;
+        }
+        if (genter) hv_gxf_genter(cpu, info->pc, info->insn & 0x1f);
+        else hv_gxf_gexit(cpu);
+        return 1;
+    }
     case HV_OP_UNDEF:
     default:
         hv_raise_undef(cpu, info->pc);
@@ -1039,7 +1051,8 @@ static int run_loop(HvCpu *cpu, int one) {
         /* Remember it for indirect branches (not the tests' stop PC: that must reach us). */
         /* EL0 tables only hold user VAs and EL1 tables kernel VAs, so each half has its own salt. */
         int kernel = b->flags & HV_BLOCK_EL1;
-        if (m->chain && b->va != m->stop_pc && b->va != m->stop_pc2 && (int)((b->va >> 55) & 1) == kernel) {
+        if (m->chain && b->va != m->stop_pc && b->va != m->stop_pc2 && (int)((b->va >> 55) & 1) == kernel &&
+            !(b->flags & HV_BLOCK_GUARDED)) {
             HvPerCpu *pcs = cpu->pc_state;
             uint64_t *t = pcs->ijc + (size_t)(b->flags & (HV_IJC_TABLES - 1)) * (HV_IJC_TABLE_BYTES / 8);
             uint64_t tag = b->va ^ cpu->ijc_salt[kernel];
