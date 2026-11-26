@@ -251,8 +251,12 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
   「Display & Brightness」→「Auto-Lock」→「Never」まで指で操作できた。下端から上へのスワイプは
   Cmd+H を送る。vsock（`devices/virtio_vsock.c`）で vphoned が使えるようになり、`tools/vphoned.py`
   でゲストのログやロック解除ができる。テストの手順は `docs/vphone-vm.md`）
-- [ ] **M9 iPhone**：IPA に組み込み、iPhone 13 mini で起動する（`pvg_lite` の経路）。
+- [x] **M9 iPhone**：IPA に組み込み、iPhone 13 mini で起動する（`pvg_lite` の経路）。
   IPA は GitHub Actions の `Build Henge IPA` で作る（下の「GitHub Actions」）。
+  （2026-11-26。13 mini（iOS 27.0.1、SideStore、StikDebug で JIT）で、4 コア、RAM 2 GB（ファイル）、
+  JIT 512 MB。開始から約 75 秒でロック画面まで出てタッチも届く。本体の footprint は約 1.7 GB で、
+  jetsam まで約 600 MB の余裕。約 2 分で発熱が「Hot」になり 1/10 ほどに落ちる。ロック画面の上スワイプ
+  （下端 1% から）は効かなかった。ゲストが時々 `e7ffdeff` の未定義命令を出すが動き続ける）
 - [ ] **M10 軽量化**：Henge のうち vphone に要る部分だけを残し、13 mini のメモリに収める。
   （2026-11-26 ユーザー決定：Henge をそのまま使う必要はない。必要な機能だけあればよい）
   - 測った値（2026-11-26、Mac の `--phone`、ゲスト RAM 2 GB はファイル）：本体の phys_footprint は
