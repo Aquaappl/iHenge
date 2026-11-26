@@ -294,6 +294,17 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
       設定の「Resume where you left off」。復元後の vphoned は接続をやり直すので約 30 s かかる。
     - 残りの候補：ガード中の `MSR SPSel`（約 90K/s）、`_platform_memmove`（プロファイルの 5.5%、出どころ未調査）、
       512 MB の JIT が埋まって訳し直す分（再翻訳 約 70%）、発熱（13 mini は 2 分で Hot）。
+  - 2026-11-27（ブランチ `m10-slim`）の測定：
+    - 13 mini で JIT 512 MB のとき、本体の footprint が 8 分で 2.07 GB（上限 2.3 GB）に達し、iOS に閉じられた。
+      4 GB 機は JIT 384 MB を既定にした（Mac の `--phone` で同じアプリ操作をして 2.1 GB → 1.75 GB）。
+    - グラフィックスは約 440 MB。Metal の確保量は約 800 MB で、内訳はゲストのテクスチャーに当たるホストの
+      GPU 専用メモリ、ゲスト RAM を Metal に見せている面（約 14 個、160 MB）、ヒープ（67 MB）。
+      面はゲストが外すと解放されている（リークではない）。減らすには画面の形式（RGhA = 8 バイト/画素）か解像度。
+    - `memmove` は Mac だけの CPU での画面取り込み（`present:`）。iPhone では通らない。
+    - ホスト側の C の重い所は分岐キャッシュ（`hv_ijc_fill/resolve/thunk`, `hv_xjump_thunk`）で合わせて数 %。
+    - 起動中は 4 vCPU が 400% で回っていて、待ちで遅いわけではない（CPU 律速）。ゲストが落ち着くと 10〜50%。
+    - `HV_RECHECK=0` は Mac で差なし（101〜104 s）。JIT 320 MB（AP 分）でも起動時間はほぼ同じ。
+    - vphoned は iPhone で起動から約 250 s で答え、呼び出し 1 回に最大約 50 s かかる。
 
 ## デバッグのやり方
 
