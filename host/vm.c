@@ -510,13 +510,18 @@ static int all_saving(void) {
 }
 
 int hv_vm_finish_pause(void) {
+    if (sep_on) { /* the SEP stops where it is too (it waits in WFE between messages) */
+        hv_machine_halt(&sep_m, HV_HALT_SAVE);
+        if (sep_started) pthread_join(sep_thread, NULL);
+        sep_started = 0;
+    }
     atomic_store(&kicker_stopped, 1);
     for (int i = 1; i < ncpus; i++)
         if (secondary_started[i]) pthread_join(secondary_threads[i], NULL);
     if (kicker_started) pthread_join(kicker, NULL);
     kicker_started = 0;
     memset(secondary_started, 0, sizeof secondary_started);
-    if (!all_saving()) return -1;
+    if (!all_saving() || (sep_on && atomic_load(&sep_cpu.halted) != HV_HALT_SAVE)) return -1;
     paused_counter = hv_counter() - m.cntvoff;
     struct timespec now;
     clock_gettime(CLOCK_REALTIME, &now);
@@ -556,7 +561,6 @@ uint64_t hv_vm_paused_counter(void) { return paused_counter; }
 int64_t hv_vm_paused_wall_ns(void) { return paused_wall_ns; }
 
 int hv_vm_pause(void) {
-    if (sep_on) return -1; /* saving the SEP's machine too is not done yet */
     pthread_mutex_lock(&pause_mu);
     if (pause_state == 2) {
         pthread_mutex_unlock(&pause_mu);
@@ -597,6 +601,10 @@ int hv_vm_continue(void) {
     for (int i = 0; i < ncpus; i++) {
         cpus[i].cntvoff = m.cntvoff;
         atomic_store(&cpus[i].halted, HV_HALT_NONE);
+    }
+    if (sep_on) {
+        sep_m.cntvoff = sep_cpu.cntvoff = m.cntvoff;
+        atomic_store(&sep_cpu.halted, HV_HALT_NONE);
     }
     hv_virtio_blk_start(board.root_blk);
     hv_virtio_blk_start(board.aux_blk);

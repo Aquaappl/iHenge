@@ -637,9 +637,25 @@ struct SessionView: View {
         }
         var rc: Int32 = -1
         if mac.isPhone {
-            // Instant resume saves one machine; the iPhone's SEP is a second one: it always starts cold.
-            rc = henge_vm_boot_iphone(mac.rom.path, mac.sepRom.path, mac.sepStorage.path, mac.disk.path, mac.aux.path,
-                                      mac.ecid, ram, Int32(cpus), &buffer, buffer.count)
+            // Instant resume saves the SEP's machine too.
+            if InstantResume.enabled, let at = InstantResume.saved(for: mac, ramMB: ram, cpus: cpus) {
+                HengeLog.log("resume", "picking up the iPhone saved \(Int(Date().timeIntervalSince(at))) s ago")
+                let t0 = Date()
+                rc = henge_vm_boot_iphone(mac.rom.path, mac.sepRom.path, mac.sepStorage.path, mac.disk.path, mac.aux.path,
+                                          mac.ecid, ram, Int32(cpus), InstantResume.file(for: mac).path,
+                                          InstantResume.ident(for: mac, ramMB: ram, cpus: cpus), &buffer, buffer.count)
+                if rc == 0 {
+                    HengeLog.log("resume", String(format: "resumed in %.1f s", Date().timeIntervalSince(t0)))
+                } else {
+                    HengeLog.log("resume", "could not resume (\(String(cString: buffer))); starting it from cold")
+                    buffer = [CChar](repeating: 0, count: 256)
+                }
+            }
+            InstantResume.discard(for: mac)
+            if rc != 0 {
+                rc = henge_vm_boot_iphone(mac.rom.path, mac.sepRom.path, mac.sepStorage.path, mac.disk.path, mac.aux.path,
+                                          mac.ecid, ram, Int32(cpus), nil, nil, &buffer, buffer.count)
+            }
             if rc != 0 {
                 error = String(cString: buffer)
                 return

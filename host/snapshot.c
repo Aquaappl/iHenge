@@ -27,6 +27,7 @@
 #include <unistd.h>
 
 #include "pvg_lite.h"
+#include "sep_storage.h"
 #include "sysreg.h"
 #include "vm.h"
 
@@ -145,7 +146,7 @@ static void w_raw(W *w, const void *d, uint64_t len) {
 static void w_section(W *w, uint32_t tag, const void *d, uint64_t len) {
     SecHdr h = {tag, 0, len};
     w_raw(w, &h, sizeof h);
-    w_raw(w, d, len);
+    if (len) w_raw(w, d, len);
 }
 
 /* A struct's bytes from one field to the end of another: fields between devices' host pointers and locks. */
@@ -237,6 +238,11 @@ static void cpu_put(HvCpu *c, const CpuState *s) {
     c->exit_req = 0;
     atomic_store(&c->halted, HV_HALT_NONE);
 }
+
+/* Apple's implementation-defined registers and GXF/SPRR (vresearch101): impdef through mprr_c3_5. */
+#define GXFS TAG('G', 'X', 'F', 'S')
+static const uint8_t *gxf_state(const HvCpu *c) { return (const uint8_t *)c + offsetof(HvCpu, impdef); }
+static size_t gxf_state_len(void) { return offsetof(HvCpu, mprr_c3_5) + sizeof(uint64_t) - offsetof(HvCpu, impdef); }
 
 /* ---- RAM ---- */
 
@@ -480,6 +486,43 @@ static int load_virtio(R *r, uint32_t tag, HvVirtio *v) {
 #define VBAL TAG('V', 'B', 'A', 'L')
 #define VINP TAG('V', 'I', 'N', 'P')
 #define XHCI TAG('X', 'H', 'C', 'I')
+#define VPIO TAG('V', 'P', 'I', 'O')
+#define VSCK TAG('V', 'S', 'C', 'K')
+#define SEPC TAG('S', 'E', 'P', 'C')
+
+/* A SEP RAM region of its own (not one it shares with the AP): sram, TZ0, VSTD. The ROM is read-only, loaded again. */
+static int sep_own_ram(HvMachine *ap, const HvRam *r) {
+    if (r->readonly) return 0;
+    for (int i = 0; i < ap->nram; i++)
+        if (ap->ram[i].host == r->host) return 0;
+    return 1;
+}
+
+/* vresearch101's SEP: its CPU, GIC, storage registers and own RAM (after the AP's devices, before the AP's RAM). */
+static void save_sep(W *w, HvMachine *ap, HvVmapple *b, uint64_t *stored) {
+    HvVresearch101 *v = &b->vr;
+    if (!v->sep_cpu) return;
+    CpuState s;
+    cpu_get(v->sep_cpu, &s);
+    w_section(w, SEPC, &s, sizeof s);
+    w_section(w, SEPC, gxf_state(v->sep_cpu), gxf_state_len());
+    w_section(w, SEPC, (const uint8_t *)v->sep_gic + offsetof(HvGic, ctlr), sizeof(HvGic) - offsetof(HvGic, ctlr));
+    if (v->sep_storage) w_section(w, SEPC, RANGE(v->sep_storage, enable, notify));
+    for (int i = 0; i < v->sep_m->nram && !w->err; i++)
+        if (sep_own_ram(ap, &v->sep_m->ram[i])) save_ram(w, &v->sep_m->ram[i], stored, 0);
+}
+
+static int load_sep(R *r, HvMachine *ap, HvVmapple *b, CpuState *s) {
+    HvVresearch101 *v = &b->vr;
+    if (!v->sep_cpu) return 0;
+    if (r_section(r, SEPC, s, sizeof *s) || r_section(r, SEPC, (uint8_t *)gxf_state(v->sep_cpu), gxf_state_len()) ||
+        r_section(r, SEPC, (uint8_t *)v->sep_gic + offsetof(HvGic, ctlr), sizeof(HvGic) - offsetof(HvGic, ctlr)))
+        return -1;
+    if (v->sep_storage && R_RANGE(r, SEPC, v->sep_storage, enable, notify)) return -1;
+    for (int i = 0; i < v->sep_m->nram; i++)
+        if (sep_own_ram(ap, &v->sep_m->ram[i]) && load_ram(r, &v->sep_m->ram[i])) return -1;
+    return 0;
+}
 
 static void save_devices(W *w, HvVmapple *b) {
     w_section(w, TAG('B', 'O', 'R', 'D'), b->avp_rtc, sizeof b->avp_rtc);
@@ -491,8 +534,8 @@ static void save_devices(W *w, HvVmapple *b) {
     w_section(w, TAG('A', 'E', 'S', ' '), RANGE(b->aes, status, cbc));
     w_section(w, TAG('B', 'D', 'I', 'F'), RANGE(b->bdif, usb_qsel, usb_q));
     w_section(w, TAG('C', 'F', 'G', ' '), b->cfg, 0x10000);
-    w_section(w, TAG('A', 'V', 'P', 'R'), hv_vmapple_avp_regs(b->ctrr), 0x10000);
-    w_section(w, TAG('A', 'V', 'P', 'R'), hv_vmapple_avp_regs(b->sealed), 0x10000);
+    w_section(w, TAG('A', 'V', 'P', 'R'), hv_vmapple_avp_regs(b->ctrr), b->ctrr ? 0x10000 : 0); /* none on vresearch101 */
+    w_section(w, TAG('A', 'V', 'P', 'R'), hv_vmapple_avp_regs(b->sealed), b->sealed ? 0x10000 : 0);
     w_section(w, TAG('P', 'C', 'I', 'E'), b->pcie->line_count, sizeof b->pcie->line_count);
     save_pci(w, TAG('P', 'C', 'I', 'E'), &b->pcie->bridge);
     if (b->root_blk) save_virtio(w, VBLK, &b->root_blk->vio);
@@ -527,6 +570,13 @@ static void save_devices(W *w, HvVmapple *b) {
         w_section(w, XHCI, (const uint8_t *)x + offsetof(HvXhci, reports), sizeof(HvXhci) - offsetof(HvXhci, reports));
         pthread_mutex_unlock(&x->mu);
     }
+    if (b->vr.sep_mbox) {
+        HvVpiop *v = b->vr.sep_mbox;
+        w_section(w, VPIO, v->side, sizeof v->side);
+        int pend[3] = {v->ap_inbox_pending, v->ap_outbox_pending, (int)v->ap_inbox_seen};
+        w_section(w, VPIO, pend, sizeof pend);
+    }
+    if (b->vsock) save_virtio(w, VSCK, &b->vsock->vio); /* its host connections are not kept: clients connect again */
     size_t pn = hv_pvg_lite_state(b->pvg, NULL, 0);
     uint8_t *pb = malloc(pn);
     if (pb && b->pvg) hv_pvg_lite_state(b->pvg, pb, pn);
@@ -550,8 +600,8 @@ static int load_devices(R *r, HvVmapple *b, void **display, uint64_t *display_le
     bad |= R_RANGE(r, TAG('A', 'E', 'S', ' '), b->aes, status, cbc);
     bad |= R_RANGE(r, TAG('B', 'D', 'I', 'F'), b->bdif, usb_qsel, usb_q);
     bad |= r_section(r, TAG('C', 'F', 'G', ' '), b->cfg, 0x10000);
-    bad |= r_section(r, TAG('A', 'V', 'P', 'R'), hv_vmapple_avp_regs(b->ctrr), 0x10000);
-    bad |= r_section(r, TAG('A', 'V', 'P', 'R'), hv_vmapple_avp_regs(b->sealed), 0x10000);
+    bad |= r_section(r, TAG('A', 'V', 'P', 'R'), hv_vmapple_avp_regs(b->ctrr), b->ctrr ? 0x10000 : 0);
+    bad |= r_section(r, TAG('A', 'V', 'P', 'R'), hv_vmapple_avp_regs(b->sealed), b->sealed ? 0x10000 : 0);
     bad |= r_section(r, TAG('P', 'C', 'I', 'E'), b->pcie->line_count, sizeof b->pcie->line_count);
     bad |= load_pci(r, TAG('P', 'C', 'I', 'E'), &b->pcie->bridge);
     if (bad) return -1;
@@ -578,6 +628,13 @@ static int load_devices(R *r, HvVmapple *b, void **display, uint64_t *display_le
             r_section(r, XHCI, (uint8_t *)x + offsetof(HvXhci, reports), sizeof(HvXhci) - offsetof(HvXhci, reports)))
             return -1;
     }
+    if (b->vr.sep_mbox) {
+        HvVpiop *v = b->vr.sep_mbox;
+        int pend[3];
+        if (r_section(r, VPIO, v->side, sizeof v->side) || r_section(r, VPIO, pend, sizeof pend)) return -1;
+        v->ap_inbox_pending = pend[0], v->ap_outbox_pending = pend[1], v->ap_inbox_seen = (uint32_t)pend[2];
+    }
+    if (b->vsock && load_virtio(r, VSCK, &b->vsock->vio)) return -1;
     void *blob;
     uint64_t len;
     if (r_section_any(r, TAG('P', 'V', 'G', 'L'), &blob, &len, 1u << 20)) return free(blob), -1;
@@ -629,11 +686,13 @@ int hv_snapshot_save(const char *path, const char *ident, char *err, size_t errl
         CpuState s;
         cpu_get(hv_vm_cpu(i), &s);
         w_section(&w, TAG('C', 'P', 'U', ' '), &s, sizeof s);
+        if (m->gxf || m->impdef_store) w_section(&w, GXFS, gxf_state(hv_vm_cpu(i)), gxf_state_len());
         if (s.cntp_ctl & 1) fprintf(stderr, "hengevm: snapshot: cpu %d has its physical timer on (host counter based)\n", i);
     }
     save_devices(&w, b);
     uint64_t stored = 0;
     pack_secs = write_secs = wait_secs = 0;
+    save_sep(&w, m, b, &stored);
     for (int i = 0; i < m->nram && !w.err; i++) save_ram(&w, &m->ram[i], &stored, m->ram[i].host == b->ram && b->ram_fd >= 0);
     Trailer t = {TAG('E', 'N', 'D', ' '), 0, w.total + sizeof(Trailer)};
     w_raw(&w, &t, sizeof t);
@@ -717,12 +776,16 @@ int hv_snapshot_restore(const char *path, const char *ident, char *err, size_t e
         return fail(err, errlen, "Out of memory.");
     }
     int bad = 0;
-    CpuState cs[HV_MAX_CPUS];
-    for (int i = 0; i < ncpus && !bad; i++) bad = r_section(&r, TAG('C', 'P', 'U', ' '), &cs[i], sizeof cs[i]);
+    CpuState cs[HV_MAX_CPUS], sep_cs;
+    for (int i = 0; i < ncpus && !bad; i++) {
+        bad = r_section(&r, TAG('C', 'P', 'U', ' '), &cs[i], sizeof cs[i]);
+        if (!bad && (m->gxf || m->impdef_store)) bad = r_section(&r, GXFS, (uint8_t *)gxf_state(hv_vm_cpu(i)), gxf_state_len());
+    }
     void *display = NULL;
     uint64_t display_len = 0;
     if (!bad) bad = load_devices(&r, b, &display, &display_len);
     read_secs = unpack_secs = 0;
+    if (!bad) bad = load_sep(&r, m, b, &sep_cs);
     for (int i = 0; i < m->nram && !bad; i++) bad = load_ram(&r, &m->ram[i]);
     Trailer t;
     if (!bad) bad = r_raw(&r, &t, sizeof t) || t.tag != TAG('E', 'N', 'D', ' ');
@@ -737,6 +800,12 @@ int hv_snapshot_restore(const char *path, const char *ident, char *err, size_t e
         HvCpu *c = hv_vm_cpu(i);
         cpu_put(c, &cs[i]);
         c->cntvoff = m->cntvoff;
+    }
+    if (b->vr.sep_cpu) {
+        b->vr.sep_m->cntvoff = m->cntvoff;
+        cpu_put(b->vr.sep_cpu, &sep_cs);
+        b->vr.sep_cpu->cntvoff = m->cntvoff;
+        hv_gicv3_update(b->vr.sep_gic);
     }
     hv_gicv3_update(b->gic);
     if (b->snd) hv_virtio_snd_resume(b->snd);

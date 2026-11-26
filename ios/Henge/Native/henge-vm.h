@@ -11,9 +11,11 @@ int henge_vm_boot(const char *rom, const char *disk, const char *aux, uint64_t e
                   int cpus, char *err, size_t errlen);
 /* The same for vphone-cli's iPhone (vresearch101): OpenAVB as rom, nvram.bin as aux, and the SEP's
    ROM (OpenSEP.bin) and storage (SEPStorage). Touches (henge_vm_touch) then go to its touchscreen,
-   with x and y over 0..0x7fff of the screen. */
+   with x and y over 0..0x7fff of the screen. resume: a saved iPhone to pick up (instant resume; ident as for
+   henge_vm_resume), or NULL to boot it; a failed resume starts nothing (boot it cold then). */
 int henge_vm_boot_iphone(const char *rom, const char *sep_rom, const char *sep_storage, const char *disk, const char *aux,
-                         uint64_t ecid, uint64_t ram_mb, int cpus, char *err, size_t errlen);
+                         uint64_t ecid, uint64_t ram_mb, int cpus, const char *resume, const char *ident, char *err,
+                         size_t errlen);
 /* Installs macOS from an IPSW onto a new machine (blank disk and auxiliary
    storage): boots the ROM in DFU mode and runs the restore over its USB port,
    as Virtualization.framework's installer does. workdir is scratch space.

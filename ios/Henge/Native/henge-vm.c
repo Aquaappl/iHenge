@@ -116,7 +116,8 @@ int henge_vm_boot(const char *rom, const char *disk, const char *aux, uint64_t e
 }
 
 int henge_vm_boot_iphone(const char *rom, const char *sep_rom, const char *sep_storage, const char *disk, const char *aux,
-                         uint64_t ecid, uint64_t ram_mb, int cpus, char *err, size_t errlen) {
+                         uint64_t ecid, uint64_t ram_mb, int cpus, const char *resume, const char *ident, char *err,
+                         size_t errlen) {
     if (begin_start(err, errlen)) return -1;
     HengeDualMapping *jit = henge_ios_jit_get_mapping();
     if (!jit || !jit->rw_addr) {
@@ -130,6 +131,14 @@ int henge_vm_boot_iphone(const char *rom, const char *sep_rom, const char *sep_s
     fprintf(stderr, "henge: booting the iPhone with %d CPUs, %llu MB RAM, a %zu MB JIT region\n", cpus,
             (unsigned long long)ram_mb, jit->size >> 20);
     if (hv_vm_create(&c, err, errlen) != 0) return failed_start();
+    if (resume) {
+        int restored = hv_snapshot_restore(resume, ident, err, errlen);
+        unlink(resume); /* used once, as for a Mac */
+        if (restored != 0) {
+            fprintf(stderr, "henge: resume failed: %s\n", err);
+            return failed_start();
+        }
+    }
     if (getenv("HV_STATS")) hv_vm_machine()->stats_interval = atoi(getenv("HV_STATS"));
     return started(err, errlen);
 }
