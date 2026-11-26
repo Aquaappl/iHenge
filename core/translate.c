@@ -1309,6 +1309,71 @@ static void put_store_field(Emit *e, int rt, uint32_t off) {
     unspill(e, &s, 1);
 }
 
+/* The same for a field past LDR's reach (the C-only part of HvCpu, after the TLB):
+   the offset goes into x6 first. x6 and x7 are scratch (is_free). */
+static void put_far_offset(Emit *e, uint32_t off) {
+    put(e, 0xd2800006u | (off & 0xffff) << 5);         /* movz x6, #lo */
+    if (off >> 16) put(e, 0xf2a00006u | (off >> 16) << 5); /* movk x6, #hi, lsl #16 */
+}
+
+static void put_load_far(Emit *e, int rt, uint32_t off) {
+    if (rt == 31) return;
+    put_far_offset(e, off);
+    if (!is_stolen(rt)) {
+        put(e, 0xf8606800u | 6u << 16 | 28u << 5 | (uint32_t)rt); /* ldr xt, [x28, x6] */
+        return;
+    }
+    put(e, 0xf8606800u | 6u << 16 | 28u << 5 | 6u);                /* ldr x6, [x28, x6] */
+    put(e, STR_X(6, 28, slot_of(rt)));
+}
+
+static void put_store_far(Emit *e, int rt, uint32_t off) {
+    put_far_offset(e, off);
+    int s = rt;
+    if (is_stolen(rt) && rt != 31) {
+        put(e, LDR_X(7, 28, slot_of(rt)));
+        s = 7;
+    }
+    put(e, 0xf8206800u | 6u << 16 | 28u << 5 | (uint32_t)s);        /* str xs, [x28, x6] (31: XZR) */
+}
+
+/* GXF and SPRR registers the guest uses most (iOS on vresearch101: SPTM reads
+   TPIDR_GL1 ~0.5M times a second, the kernel the SPRR tables on every switch):
+   plain loads and stores of their storage, as sysreg.c keeps it. A guarded block
+   runs only while guarded at EL1 (HV_BLOCK_GUARDED), so the GL1 bank exists there.
+   Writes with side effects (the permission tables, VBAR, SP) stay in the helper. */
+static int translate_gxf_inline(Emit *e, uint32_t reg, int read, int rt) {
+    if (!e->m->gxf || (reg >> 14) != 3 || ((reg >> 11) & 7) != 6 || ((reg >> 7) & 15) != 15) return 0;
+    int el1 = (e->flags & HV_BLOCK_EL1) != 0, guarded = el1 && (e->flags & HV_BLOCK_GUARDED);
+    uint32_t crm = (reg >> 3) & 15, op2 = reg & 7, off = 0;
+    if (crm == 10 && guarded) {
+        static const uint32_t gl1[8] = {0, offsetof(HvCpu, tpidr_gl1), 0, offsetof(HvCpu, spsr_gl1),
+                                        offsetof(HvCpu, aspsr_gl1), offsetof(HvCpu, esr_gl1),
+                                        offsetof(HvCpu, elr_gl1), offsetof(HvCpu, far_gl1)};
+        off = gl1[op2];
+        if (!off) return 0;
+        if (read) put_load_far(e, rt, off);
+        else put_store_far(e, rt, off);
+        return 1;
+    }
+    if (!read) return 0;
+    if (!el1 && !(crm == 1 && op2 == 5)) return 0; /* EL0 may read only its own table (sysreg.c el0_allowed) */
+    if (crm == 8 && op2 == 0) off = offsetof(HvCpu, gxf_status) + 1;         /* GXF_STATUS_EL1: gxf_status[1] */
+    else if (crm == 1 && op2 == 5) off = offsetof(HvCpu, sprr_perm);         /* SPRR_PERM_EL0 */
+    else if (crm == 1 && op2 == 6) off = offsetof(HvCpu, sprr_perm) + 8;     /* SPRR_PERM_EL1 */
+    else return 0;
+    if (crm == 8) { /* a byte: LDRB zero-extends */
+        if (rt == 31) return 1;
+        put_far_offset(e, off);
+        int d = is_stolen(rt) ? 6 : rt;
+        put(e, 0x38606800u | 6u << 16 | 28u << 5 | (uint32_t)d); /* ldrb wd, [x28, x6] */
+        if (d != rt) put(e, STR_X(6, 28, slot_of(rt)));
+        return 1;
+    }
+    put_load_far(e, rt, off);
+    return 1;
+}
+
 /* MRS/MSR of NZCV, FPCR, FPSR: the host registers are the guest's. */
 static void put_native_sysreg(Emit *e, uint32_t insn, int read) {
     int rt = insn & 0x1f;
@@ -1482,6 +1547,7 @@ static int translate_sysreg_inline(Emit *e, uint32_t insn, uint64_t pc) {
     uint32_t reg = (insn >> 5) & 0xffff;
     int el1 = (e->flags & HV_BLOCK_EL1) != 0, spx = (e->flags & HV_BLOCK_SPX) != 0;
     int fp_ok = !(e->flags & HV_BLOCK_FPOFF);
+    if (translate_gxf_inline(e, reg, read, rt)) return 1;
     switch (reg) {
     case SR(3, 3, 14, 0, 2): /* CNTVCT_EL0 */
     case SR(3, 3, 14, 0, 6): /* CNTVCTSS_EL0 */
