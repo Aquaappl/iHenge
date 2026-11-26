@@ -175,10 +175,14 @@ struct SessionView: View {
         .task(id: state) { // the Home button waits for vphoned, which starts a while after the lock screen
             homeReady = false
             guard mac.isPhone, state == 1 else { return }
+            let since = Date()
+            var tries = 0
             while !Task.isCancelled && !homeReady {
+                tries += 1
+                if tries % 6 == 0 { HengeLog.log("input", "still waiting for vphoned (\(Int(Date().timeIntervalSince(since))) s)") }
                 if await PhoneTouch.vphonedReady() {
                     homeReady = true
-                    HengeLog.log("input", "vphoned answers: the Home button is on")
+                    HengeLog.log("input", "vphoned answers after \(Int(Date().timeIntervalSince(since))) s: the iPhone buttons are on")
                     Task.detached { // fewer animations and no blur: less for the emulated GPU and CPUs
                         let r = henge_vm_lighten()
                         HengeLog.log("session", r == 0 ? "Reduce Motion and Reduce Transparency are on in the iPhone" : "could not turn on Reduce Motion")
