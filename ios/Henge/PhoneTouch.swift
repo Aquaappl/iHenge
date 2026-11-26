@@ -7,6 +7,7 @@ import UIKit
 /// moved up sends Home (the engine turns it into Cmd+H: iOS starts no home swipe from it).
 struct PhoneTouch: UIViewRepresentable {
     func makeUIView(context: Context) -> Surface { Surface() }
+    func updateUIView(_ view: Surface, context: Context) {}
 
     /// The Home button, through vphoned: on the lock screen it unlocks, elsewhere it presses Home.
     static func home() {
