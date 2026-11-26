@@ -245,7 +245,12 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
   （2026-11-26。Mac の PVG フレームワークではなく、iPhone と同じ `pvg_lite` + Metal の経路
   （`--no-pvg --display 1206x2622`）でロック画面が出た。`HV_PVG_SHOT=prefix` で PNG を保存できる。
   時計がホストの時刻と合っていない（RTC かタイムゾーン、未調査））
-- [ ] **M8 タッチ**：タップとスクロールが効く。
+- [x] **M8 タッチ**：タップとスクロールが効く。
+  （2026-11-26、ブランチ `m8-touchscreen`。xHCI のポート 2 に VZ のタッチスクリーン（`05ac:8108`）、
+  ルートポートは取り外し不可でハイスピード。タップで「設定」が開き、リストがスクロールし、
+  「Display & Brightness」→「Auto-Lock」→「Never」まで指で操作できた。下端から上へのスワイプは
+  Cmd+H を送る。vsock（`devices/virtio_vsock.c`）で vphoned が使えるようになり、`tools/vphoned.py`
+  でゲストのログやロック解除ができる。テストの手順は `docs/vphone-vm.md`）
 - [ ] **M9 iPhone**：IPA に組み込み、iPhone 13 mini で起動する（`pvg_lite` の経路）。
   IPA は GitHub Actions の `Build Henge IPA` で作る（下の「GitHub Actions」）。
 
@@ -278,4 +283,8 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
   1 台前提の部分、GIC が 1 コアのマシンを起こさない点、WFE の空回り、共有デバイスのロック）。
 - iOS ゲストが何 GB の RAM まで減らして起動するか（13 mini は RAM 4 GB）。
 - 13 mini は iOS 27.1。JIT は Henge 内蔵の StikJIT ヘルパー（iOS 26 以降）で有効にできるはず。
-- Henge の `pvg_lite` が iOS ゲストの準仮想化 GPU のコマンドをそのまま再生できるか。
+- ~~Henge の `pvg_lite` が iOS ゲストの準仮想化 GPU のコマンドをそのまま再生できるか~~ → できる
+  （Mac 上でロック画面、ホーム画面、「設定」まで描けた）。ただし vphoned の `screen.screenshot`
+  （ゲストの中での画面の読み戻し）は一面の緑になる。
+- 新しい VM は 60 秒で自動ロックし、ロック中はタッチが捨てられる。テストではまず Auto-Lock を Never に
+  する（vphoned の `display.auto_lock.set` は権限がなく効かない。指で設定アプリから変える）。

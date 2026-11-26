@@ -50,6 +50,21 @@ V=~/vphone-vms/iphone16pro-henge
 Refresh the clone's writable files from the original before a run when a clean start matters
 (`cp -c Disk.img nvram.bin SEPStorage` after removing the clone's copies).
 
+M8 (2026-11-26): touch and vphoned.
+
+- The touchscreen takes `tp ID PHASE X Y` lines in `HV_INPUT_FILE` (phase 0 down, 1 move, 2 up; X and Y
+  over 0..0x7fff of the screen, top left 0). The file is read every 200 ms, so leave 0.3 s between a
+  tap's down and up. A drag from the bottom 1% up by 12% or more also sends Cmd+H (`HV_TOUCH_HOME=0`: off).
+  `HV_TS_LOG=1` prints each touch report.
+- vphoned (vphone-cli's guest daemon) is reachable through the vsock socket: `tools/vphoned.py GET
+  /v1/health`, `POST /v1/rpc '{"method":"screen.unlock","params":{},"id":1}'`,
+  `logs.syslog {seconds, process}` (backboardd's `TouchEvents` show each touch), `apps.foreground`,
+  `device.screen`. `HV_VSOCK_LOG=1` logs the vsock packets.
+- A new VM auto-locks after 60 s, and a locked iPhone drops touches. Set Settings › Display & Brightness
+  › Auto-Lock to Never with the touchscreen once, then keep using the same clone (no more refreshing
+  it from the original). Until then, a Shift press every 10 s (`hiddown 225` / `hidup 225`) keeps it awake.
+- `HV_PVG_SWAP_LOG=1` logs each change of the displayed surface.
+
 M7 (2026-11-26): the same command plus `--display 1206x2622` reaches the lock screen in about four
 minutes, drawn by `pvg_lite` + Metal (the iPhone's path). `HV_PVG_SHOT=runs/henge/shots/p
 HV_PVG_SHOT_SECS=20` saves the display as PNGs; `HENGE_GXF_LOG=1` logs every GL1 entry and exit.

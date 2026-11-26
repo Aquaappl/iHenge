@@ -68,7 +68,8 @@ typedef struct HvXhci {
     struct HvTpFinger {
         int in;
         int id;        /* the report's 4-bit touch ID, 1..15 */
-        int x, y;      /* sensor coordinates, 0..HV_TP_SENSOR_X/Y */
+        int x, y;      /* sensor coordinates, 0..HV_TP_SENSOR_X/Y (touchscreen: 0..0x7fff) */
+        int start_y;   /* where it went down (the touchscreen's Home swipe) */
         uint8_t state; /* the report's 3-bit state: 0 none, 3 near, 4 contact, 7 stop */
     } tp_fingers[HV_TP_FINGERS];
     int tp_button;     /* the pad's full press (report byte 1, bit 0) */
@@ -83,6 +84,10 @@ typedef struct HvXhci {
     uint32_t tp_multi_logs; /* multi-finger deliveries logged, capped */
     uint8_t tp_f1[8];   /* feature report 1: the header for the selected sensor register */
     int tp_f1_len;
+    /* vresearch101: port 2 is Virtualization.framework's touchscreen (05ac:8108) instead
+       of the trackpad; hv_xhci_touch then takes 0..0x7fff screen coordinates (top left 0). */
+    int touchscreen;
+    uint32_t ts_last_ms; /* the last report while a finger touched (HV_TS_STREAM) */
 } HvXhci;
 
 HvXhci *hv_xhci_create(HvMachine *m, HvPcie *bus);
@@ -102,6 +107,8 @@ void hv_xhci_touch(HvXhci *x, int id, int phase, int px, int py, uint32_t ts_ms)
 void hv_xhci_touch_frame(HvXhci *x, uint32_t ts_ms);
 /* Any thread: the pad's full press (a click), down or up. */
 void hv_xhci_touch_button(HvXhci *x, int down);
+/* Before the guest runs: port 2 becomes the touchscreen (vresearch101). */
+void hv_xhci_set_touchscreen(HvXhci *x);
 /* CPU thread: hand waiting reports to the guest. */
 void hv_xhci_poll(HvXhci *x);
 

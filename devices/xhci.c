@@ -138,6 +138,47 @@ static const struct HvXhciDev devs[HV_XHCI_DEVICES] = {
     {tp_strings, tp_device_desc, tp_config_desc, tp_report_desc, sizeof tp_report_desc},
 };
 
+/* Port 2 on vresearch101: Virtualization.framework's "Virtual USB Touch Screen"
+   (05ac:8108), as qemu-vphone's usb-touchscreen describes it (hw/usb/dev-hid.c,
+   GPL-2.0-or-later): a Touch Screen of four Finger collections, each a 6-bit
+   transducer index, In Range, Touch, and X and Y over 0..0x7fff. */
+#define TS_FINGER \
+    0x05, 0x0d, 0x09, 0x22, 0xa1, 0x02,             /* usage page (digitizer), usage (finger), collection (logical) */ \
+    0x09, 0x38, 0x75, 0x06, 0x95, 0x01, 0x81, 0x02, /* transducer index, 6 bits */ \
+    0x09, 0x32, 0x09, 0x33, 0x15, 0x00, 0x25, 0x01, /* in range, touch */ \
+    0x75, 0x01, 0x95, 0x02, 0x81, 0x02, \
+    0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x15, 0x00, /* X, Y, 0..0x7fff, 16 bits each */ \
+    0x26, 0xff, 0x7f, 0x75, 0x10, 0x95, 0x02, 0x81, 0x02, \
+    0xc0
+#define TS_FINGERS 4
+#define TS_REPORT_LEN (TS_FINGERS * 5)
+
+static const uint8_t ts_report_desc[] = {
+    0x05, 0x0d, 0x09, 0x04, 0xa1, 0x01, /* usage page (digitizer), usage (touch screen), collection (application) */
+    TS_FINGER, TS_FINGER, TS_FINGER, TS_FINGER,
+    0xc0,
+};
+
+static const uint8_t ts_device_desc[18] = {
+    18, 1, 0x00, 0x02, 0, 0, 0, 64, /* USB 2.0, class per interface, EP0 64 bytes */
+    0xac, 0x05, 0x08, 0x81,         /* vendor Apple, product 0x8108 */
+    0x00, 0x00, 1, 2, 3, 1,
+};
+
+static const uint8_t ts_config_desc[34] = {
+    9, 2, 34, 0, 1, 1, 0, 0xa0, 50,
+    9, 4, 0, 0, 1, 3, 0, 0, 0,                /* interface 0: HID, no boot protocol */
+    9, 0x21, 0x11, 0x01, 0, 1, 0x22, sizeof ts_report_desc, 0,
+    7, 5, 0x81, 3, TS_REPORT_LEN, 0, 4,       /* EP1 IN, interrupt, 20 bytes */
+};
+
+static const char *const ts_strings[] = {NULL, "Apple Inc.", "Virtual USB Touch Screen", "HengeVM"};
+static const struct HvXhciDev ts_dev = {ts_strings, ts_device_desc, ts_config_desc, ts_report_desc, sizeof ts_report_desc};
+
+static const struct HvXhciDev *dev_of(const HvXhci *x, int dev) {
+    return dev == 1 && x->touchscreen ? &ts_dev : &devs[dev];
+}
+
 static int xlog(void) {
     static int on = -1;
     if (on < 0) on = getenv("HV_XHCI_LOG") != NULL;
@@ -319,7 +360,7 @@ static void tp_select(HvXhci *x, int reg) {
 /* Answer a SETUP on endpoint 0. Returns the reply length (data to send for IN
    requests), or -1 to stall. */
 static int control(HvXhci *x, int slot, const uint8_t setup[8], uint8_t *out, int max) {
-    const struct HvXhciDev *d = &devs[x->slots[slot].dev];
+    const struct HvXhciDev *d = dev_of(x, x->slots[slot].dev);
     uint8_t type = setup[0], req = setup[1];
     uint16_t value = (uint16_t)(setup[2] | setup[3] << 8);
     if (xlog()) fprintf(stderr, "xhci: request %02x %02x value %04x len %u\n", type, req, value, setup[6] | setup[7] << 8);
@@ -521,6 +562,13 @@ static void run_ep_in(HvXhci *x, int slot) {
             x->tp_rhead++;
             x->tp_delivered++;
             if (x->tp_delivered <= 16) fprintf(stderr, "hengevm: xhci: trackpad: %u bytes to the guest (delivered %llu)\n", n, (unsigned long long)x->tp_delivered);
+            if (x->touchscreen && getenv("HV_TS_LOG")) { /* each finger: index/range/touch, x, y */
+                fprintf(stderr, "hengevm: touch report:");
+                for (uint32_t i = 0; i + 5 <= n; i += 5)
+                    fprintf(stderr, " [%u%s%s %u,%u]", rep[i] & 0x3f, rep[i] & 0x40 ? " in" : "", rep[i] & 0x80 ? " touch" : "",
+                            rep[i + 1] | rep[i + 2] << 8, rep[i + 3] | rep[i + 4] << 8);
+                fprintf(stderr, "\n");
+            }
             if (len >= 30 && x->tp_multi_logs < 40) { /* two fingers or more: dump the frame so we can watch them move */
                 x->tp_multi_logs++;
                 int nf = (int)((len - 12) / 9);
@@ -700,11 +748,24 @@ static void run_commands(HvXhci *x) {
 
 /* ---- ports ---- */
 
+/* A port after reset, with its device attached. iOS takes touches only from the
+   built-in digitizer: the touchscreen's port sets Device Removable (bit 30: 1 = the
+   device cannot be removed), as qemu-vphone's root ports do (VPHONE_XHCI_NONREMOVABLE). */
+#define PORT_DR (1u << 30)
+static uint32_t port_initial(const HvXhci *x, int p) {
+    /* xHCI's default speed IDs are 1 full, 2 low, 3 high: SPEED_HIGH (2) makes port 2 low speed, which
+       the macOS trackpad has always had. The touchscreen's 20-byte reports need a real high-speed port
+       (a low-speed interrupt endpoint carries 8 bytes at most). */
+    uint32_t speed = !p ? SPEED_FULL : x->touchscreen ? 3 : SPEED_HIGH;
+    return PORT_PP | PORT_CCS | PORT_CSC | speed << PORT_SPEED_SHIFT | 7u << PORT_PLS_SHIFT |
+           (x->touchscreen && p == 1 ? PORT_DR : 0);
+}
+
 /* Port 1 is the full-speed keyboard; port 2 is the high-speed trackpad, as the real
-   Magic Trackpad 2 is. */
+   Magic Trackpad 2 is (the touchscreen on vresearch101). */
 static void port_connect(HvXhci *x) {
     for (int p = 0; p < HV_XHCI_PORTS; p++) {
-        x->portsc[p] = PORT_PP | PORT_CCS | PORT_CSC | (uint32_t)(p ? SPEED_HIGH : SPEED_FULL) << PORT_SPEED_SHIFT | 7u << PORT_PLS_SHIFT;
+        x->portsc[p] = port_initial(x, p);
         port_event(x, p);
     }
 }
@@ -761,7 +822,7 @@ static void reset(HvXhci *x) {
     x->tp_multi_logs = 0;
     x->tp_f1_len = 0;
     for (int p = 0; p < HV_XHCI_PORTS; p++)
-        x->portsc[p] = PORT_PP | PORT_CCS | PORT_CSC | (uint32_t)(p ? SPEED_HIGH : SPEED_FULL) << PORT_SPEED_SHIFT | 7u << PORT_PLS_SHIFT;
+        x->portsc[p] = port_initial(x, p);
     update_irq(x);
 }
 
@@ -988,7 +1049,25 @@ void hv_xhci_key_linux(HvXhci *x, uint16_t code, int down) {
    bits, centred on the sensor, with y inverted; byte 3 then holds the finger
    type and the 3-bit state (0 none, 3 near, 4 contact, 7 stop), then the touch
    major and minor axes, size and pressure, and finally the touch ID and angle. */
+/* The touchscreen's report: per finger slot i (the first four), the transducer
+   index i in bits 5:0, In Range (6) and Touch (7) while it is down, then X and Y.
+   A finger lifting is first in range without touching (state 7), then out of range. */
+static int ts_build_report(HvXhci *x, uint8_t *out) {
+    memset(out, 0, TS_REPORT_LEN);
+    for (int i = 0; i < TS_FINGERS; i++) {
+        const struct HvTpFinger *f = &x->tp_fingers[i];
+        uint8_t *b = out + 5 * i;
+        b[0] = (uint8_t)i;
+        if (f->in && f->state == 4) b[0] |= 0xc0;
+        else if (f->in && f->state == 7) b[0] |= 0x40;
+        b[1] = (uint8_t)f->x, b[2] = (uint8_t)(f->x >> 8);
+        b[3] = (uint8_t)f->y, b[4] = (uint8_t)(f->y >> 8);
+    }
+    return TS_REPORT_LEN;
+}
+
 static int tp_build_report(HvXhci *x, uint8_t *out) {
+    if (x->touchscreen) return ts_build_report(x, out);
     int n = 0;
     memset(out, 0, (size_t)(12 + 9 * HV_TP_FINGERS));
     out[0] = 0x02;
@@ -1054,8 +1133,19 @@ static struct HvTpFinger *tp_new_finger(HvXhci *x) {
     return NULL;
 }
 
+/* The touchscreen's Home: iOS starts no home swipe from this digitizer, so a finger
+   that goes down on the bottom 1% and comes up at least 12% higher sends the
+   keyboard's Cmd+H, as qemu-vphone does (HV_TOUCH_HOME=0: off). */
+#define TS_EDGE_Y (0x7fff - 0x7fff / 100)
+#define TS_HOME_RISE (0x7fff * 12 / 100)
+
 void hv_xhci_touch(HvXhci *x, int id, int phase, int px, int py, uint32_t ts_ms) {
     if (!x || id < 1 || id > 15) return;
+    if (x->touchscreen) {
+        px = px < 0 ? 0 : px > 0x7fff ? 0x7fff : px;
+        py = py < 0 ? 0 : py > 0x7fff ? 0x7fff : py;
+    }
+    int home = 0;
     pthread_mutex_lock(&x->mu);
     if (phase == 0) {
         struct HvTpFinger *f = tp_new_finger(x);
@@ -1064,6 +1154,7 @@ void hv_xhci_touch(HvXhci *x, int id, int phase, int px, int py, uint32_t ts_ms)
             f->id = id;
             f->x = px;
             f->y = py;
+            f->start_y = py;
             f->state = 4; /* contact: a touch, not a hover, so the guest tracks it at once */
             tp_queue(x, ts_ms);
         }
@@ -1078,6 +1169,7 @@ void hv_xhci_touch(HvXhci *x, int id, int phase, int px, int py, uint32_t ts_ms)
                 /* no report yet: the caller commits one frame holding every finger that
                    moved, so the guest sees them move together instead of one at a time */
             } else {
+                if (x->touchscreen && f->start_y >= TS_EDGE_Y && f->y + TS_HOME_RISE <= f->start_y) home = 1;
                 f->state = 7; /* stop */
                 tp_queue(x, ts_ms);
                 f->in = 0;
@@ -1088,6 +1180,12 @@ void hv_xhci_touch(HvXhci *x, int id, int phase, int px, int py, uint32_t ts_ms)
         }
     }
     pthread_mutex_unlock(&x->mu);
+    if (home && !(getenv("HV_TOUCH_HOME") && getenv("HV_TOUCH_HOME")[0] == '0')) {
+        hv_xhci_key(x, 0xe3, 1); /* left GUI (Cmd) */
+        hv_xhci_key(x, 0x0b, 1); /* H */
+        hv_xhci_key(x, 0x0b, 0);
+        hv_xhci_key(x, 0xe3, 0);
+    }
     hv_machine_wake(x->m);
 }
 
@@ -1112,8 +1210,29 @@ void hv_xhci_touch_button(HvXhci *x, int down) {
     hv_machine_wake(x->m);
 }
 
+void hv_xhci_set_touchscreen(HvXhci *x) {
+    if (!x) return;
+    pthread_mutex_lock(&x->mu);
+    x->touchscreen = 1;
+    x->portsc[1] = port_initial(x, 1);
+    pthread_mutex_unlock(&x->mu);
+}
+
 void hv_xhci_poll(HvXhci *x) {
     if (!x) return;
+    /* HV_TS_STREAM (experiment): while a finger touches, the touchscreen reports every
+       8 ms, as a real digitizer streams its frames, even when nothing moved. */
+    static int stream = -1;
+    if (stream < 0) stream = getenv("HV_TS_STREAM") != NULL;
+    if (x->touchscreen && stream) {
+        pthread_mutex_lock(&x->mu);
+        int touching = 0;
+        for (int i = 0; i < TS_FINGERS; i++) touching |= x->tp_fingers[i].in && x->tp_fingers[i].state == 4;
+        uint32_t now = tp_now_ms();
+        if (touching && now - x->ts_last_ms >= 8 && x->tp_rtail == x->tp_rhead) tp_queue(x, now);
+        if (touching && x->tp_rtail != x->tp_rhead) x->ts_last_ms = now;
+        pthread_mutex_unlock(&x->mu);
+    }
     for (int slot = 1; slot <= HV_XHCI_SLOTS; slot++)
         if (x->slots[slot].dev >= 0) run_ep_in(x, slot);
 }

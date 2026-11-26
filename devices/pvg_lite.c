@@ -265,6 +265,16 @@ static void display_swap(HvPvgLite *p, uint64_t mapping, const uint32_t *args) {
             fprintf(stderr, "\n");
         }
     }
+    {   /* HV_PVG_SWAP_LOG: each time the displayed surface changes */
+        static int on = -1;
+        static uint64_t last = ~0ull;
+        if (on < 0) on = getenv("HV_PVG_SWAP_LOG") != NULL;
+        if (on && mapping != last) {
+            fprintf(stderr, "hengevm: pvg-lite: swap %llu shows mapping %llu (was %llu)\n", (unsigned long long)p->swaps,
+                    (unsigned long long)mapping, (unsigned long long)last);
+            last = mapping;
+        }
+    }
     p->swaps++;
     *(uint32_t *)(d + 0xf98) = (uint32_t)p->swaps;
     *(uint32_t *)(d + 0xfb0) = (uint32_t)mapping;
