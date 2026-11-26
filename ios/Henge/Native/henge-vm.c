@@ -576,12 +576,12 @@ static int vphoned_request(const char *path, const char *body, int timeout, char
 
 int henge_vm_vphoned_ready(void) {
     char out[2048];
-    return vphoned_request("/v1/health", NULL, 5, out, sizeof out) == 0 && strstr(out, "\"status\":\"ok\"") ? 1 : 0;
+    return vphoned_request("/v1/health", NULL, 20, out, sizeof out) == 0 && strstr(out, "\"status\":\"ok\"") ? 1 : 0;
 }
 
 int henge_vm_unlock(void) {
     char out[1024];
-    if (vphoned_request("/v1/rpc", "{\"method\":\"screen.unlock\",\"params\":{},\"id\":1}", 30, out, sizeof out)) return -1;
+    if (vphoned_request("/v1/rpc", "{\"method\":\"screen.unlock\",\"params\":{},\"id\":1}", 120, out, sizeof out)) return -1;
     fprintf(stderr, "henge: vphoned screen.unlock: %.200s\n", out);
     if (!strstr(out, "\"result\"")) return -1;
     return strstr(out, "\"was_locked\":true") || strstr(out, "\"was_screen_off\":true") ? 1 : 0;
@@ -589,7 +589,7 @@ int henge_vm_unlock(void) {
 
 static int press_home(void) {
     char out[512];
-    if (vphoned_request("/v1/rpc", "{\"method\":\"input.button\",\"params\":{\"name\":\"home\"},\"id\":4}", 30, out, sizeof out)) return -1;
+    if (vphoned_request("/v1/rpc", "{\"method\":\"input.button\",\"params\":{\"name\":\"home\"},\"id\":4}", 120, out, sizeof out)) return -1;
     fprintf(stderr, "henge: vphoned input.button home: %.200s\n", out);
     return strstr(out, "\"result\"") ? 1 : -1;
 }
@@ -598,7 +598,7 @@ int henge_vm_home(void) { return press_home(); }
 
 int henge_vm_close_app(void) {
     char out[1024], id[256] = "";
-    if (vphoned_request("/v1/rpc", "{\"method\":\"apps.foreground\",\"params\":{},\"id\":2}", 30, out, sizeof out)) return -1;
+    if (vphoned_request("/v1/rpc", "{\"method\":\"apps.foreground\",\"params\":{},\"id\":2}", 120, out, sizeof out)) return -1;
     const char *p = strstr(out, "\"bundle_id\":\"");
     if (p) {
         p += 13;
@@ -612,7 +612,7 @@ int henge_vm_close_app(void) {
     if (id[0] && strcmp(id, "com.apple.springboard")) {
         char body[512];
         snprintf(body, sizeof body, "{\"method\":\"apps.terminate\",\"params\":{\"bundle_id\":\"%s\"},\"id\":3}", id);
-        if (vphoned_request("/v1/rpc", body, 30, out, sizeof out) == 0 && strstr(out, "\"result\"")) closed = 1;
+        if (vphoned_request("/v1/rpc", body, 120, out, sizeof out) == 0 && strstr(out, "\"result\"")) closed = 1;
         fprintf(stderr, "henge: vphoned apps.terminate %s: %.160s\n", id, out);
     }
     return press_home() < 0 ? -1 : closed;
@@ -625,10 +625,10 @@ int henge_vm_lighten(void) {
     char out[512], body[256];
     for (int i = 0; i < 2; i++) {
         snprintf(body, sizeof body, "{\"method\":\"settings.get\",\"params\":{\"domain\":\"com.apple.Accessibility\",\"key\":\"%s\"},\"id\":5}", keys[i]);
-        if (vphoned_request("/v1/rpc", body, 30, out, sizeof out)) return -1;
+        if (vphoned_request("/v1/rpc", body, 120, out, sizeof out)) return -1;
         if (strstr(out, "\"value\":1")) continue;
         snprintf(body, sizeof body, "{\"method\":\"settings.set\",\"params\":{\"domain\":\"com.apple.Accessibility\",\"key\":\"%s\",\"value\":1,\"type\":\"int\"},\"id\":6}", keys[i]);
-        if (vphoned_request("/v1/rpc", body, 60, out, sizeof out)) return -1;
+        if (vphoned_request("/v1/rpc", body, 120, out, sizeof out)) return -1;
         fprintf(stderr, "henge: vphoned set %s: %.120s\n", keys[i], out);
     }
     return 0;

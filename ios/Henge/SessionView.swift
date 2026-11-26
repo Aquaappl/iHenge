@@ -183,9 +183,15 @@ struct SessionView: View {
                 if await PhoneTouch.vphonedReady() {
                     homeReady = true
                     HengeLog.log("input", "vphoned answers after \(Int(Date().timeIntervalSince(since))) s: the iPhone buttons are on")
-                    Task.detached { // fewer animations and no blur: less for the emulated GPU and CPUs
-                        let r = henge_vm_lighten()
-                        HengeLog.log("session", r == 0 ? "Reduce Motion and Reduce Transparency are on in the iPhone" : "could not turn on Reduce Motion")
+                    Task.detached { // fewer animations and no blur: less for the emulated GPU and CPUs; vphoned is slow at first
+                        for attempt in 1...3 {
+                            if henge_vm_lighten() == 0 {
+                                HengeLog.log("session", "Reduce Motion and Reduce Transparency are on in the iPhone")
+                                return
+                            }
+                            HengeLog.log("session", "could not turn on Reduce Motion yet (try \(attempt))")
+                            try? await Task.sleep(nanoseconds: 60_000_000_000)
+                        }
                     }
                 } else {
                     try? await Task.sleep(nanoseconds: 5_000_000_000)
