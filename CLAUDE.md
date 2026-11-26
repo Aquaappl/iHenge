@@ -253,6 +253,33 @@ vphoned（vphone-cli のゲスト側デーモン）がポート 1339 で使う�
   でゲストのログやロック解除ができる。テストの手順は `docs/vphone-vm.md`）
 - [ ] **M9 iPhone**：IPA に組み込み、iPhone 13 mini で起動する（`pvg_lite` の経路）。
   IPA は GitHub Actions の `Build Henge IPA` で作る（下の「GitHub Actions」）。
+- [ ] **M10 軽量化**：Henge のうち vphone に要る部分だけを残し、13 mini のメモリに収める。
+  （2026-11-26 ユーザー決定：Henge をそのまま使う必要はない。必要な機能だけあればよい）
+  - 測った値（2026-11-26、Mac の `--phone`、ゲスト RAM 2 GB はファイル）：本体の phys_footprint は
+    JIT 768 MB で 2686 MB（ピーク 2860）、JIT 512 MB で約 2140 MB。内訳は JIT 約 1.1 GB（ほぼ全部が
+    使用中になる）、ブロック記録などの malloc 約 600 MB、GPU 約 300 MB。ゲストは 2 GB で問題なく動く。
+  - iPhone 専用の構成（ビルドフラグか別ターゲット）：macOS のインストーラー（DFU、IPSW、restore）、
+    Instant Resume、共有フォルダーとクリップボード、Magic Trackpad、virtio のキーボードとマウス、
+    `dt_fixup`、macOS 用の ID 設定、サウンド、使わないならネットワーク（slirp）を外す。
+    Mac の `hengevm` の macOS ゲストは壊さない（既定の `vmapple` はそのまま）。
+  - メモリ：iPhone モードの JIT を 256〜384 MB に。ブロックとスロットの表を JIT の大きさから
+    切り離して小さく。CPU ごとの表（IJC、ucode、stash）を `HV_MAX_CPUS` ではなく実際のコア数だけ。
+    SEP の JIT とハッシュ表を詰める（16〜32 MB）。画面を小さく（603x1311 などを iOS が受け付けるか）。
+  - 完了の条件：Mac の `--phone`、ゲスト 2 GB で本体の footprint が 1.3 GB 以下、起動してタッチが効く。
+    `footprint <pid>` の値を `docs/` に記録する。
+- [ ] **M11 高速化**：起動と操作を速くする。
+  - まず測る：OpenAVB → SEP → iBoot → SPTM/TXM → XNU → launchd → SpringBoard → vphoned の各段の時刻を
+    ログから出し、`docs/perf.md` に記録する（qemu-vphone の時間とも比べる）。`--stats` で
+    ヘルパー呼び出しと例外の多い所を探す。
+  - 候補：
+    - ガード中のブロックを分岐キャッシュ（IJC）に入れられるようにする（今は GENTER/GEXIT のたびに遅い経路）
+    - SPRR の書き込みごとの TLB 全捨てを減らす
+    - SEP の WFE とポーリングの待ち時間
+    - iBoot や sepOS の待ちループ（タイマー）を早送りする
+    - ディスク読み出し（hvsparse）の先読み
+    - 翻訳済みコードや起動途中の状態を次回の起動に使い回す（iPhone 用の Instant Resume。SEP の状態の保存が要る）
+    - vCPU の数（2〜4）の比較
+  - 完了の条件：起動時間と操作の重さ（アプリの起動時間など）を測り、M11 前の半分を目標にする。
 
 ## デバッグのやり方
 
