@@ -807,10 +807,13 @@ void hv_vm_mouse_wheel(int dy) { wheel(HV_REL_WHEEL, dy); }
 void hv_vm_mouse_hwheel(int dx) { wheel(HV_REL_HWHEEL, dx); }
 
 void hv_vm_touch(int id, int phase, int x, int y, uint32_t ts_ms) {
+    /* The Mac's Magic Trackpad takes sensor units; vresearch101's touchscreen 0..0x7fff of the screen. */
+    int touchscreen = board.machine == HV_MACHINE_VRESEARCH101;
+    int max_x = touchscreen ? 0x7fff : HV_TP_SENSOR_X, max_y = touchscreen ? 0x7fff : HV_TP_SENSOR_Y;
     if (x < 0) x = 0;
-    if (x > HV_TP_SENSOR_X) x = HV_TP_SENSOR_X;
+    if (x > max_x) x = max_x;
     if (y < 0) y = 0;
-    if (y > HV_TP_SENSOR_Y) y = HV_TP_SENSOR_Y;
+    if (y > max_y) y = max_y;
     hv_xhci_touch(board.usb, id, phase, x, y, ts_ms);
 }
 

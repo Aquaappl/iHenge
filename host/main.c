@@ -680,8 +680,8 @@ static void *input_thread(void *unused) {
                 struct timespec ts;
                 clock_gettime(CLOCK_MONOTONIC, &ts);
                 uint32_t ms = (uint32_t)((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
-                hv_xhci_touch(board.usb, id, phase, px, py, ms);
-                if (phase == 1) hv_xhci_touch_frame(board.usb, ms);
+                hv_vm_touch(id, phase, px, py, ms); /* the app's path (its clamping too) */
+                if (phase == 1) hv_vm_touch_frame(ms);
             }
         }
         else if (!strncmp(line, "tpclick ", 8)) /* "tpclick 1|0": the Magic Trackpad 2's own press (testing) */
