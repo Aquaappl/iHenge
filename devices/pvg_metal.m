@@ -2212,6 +2212,13 @@ typedef struct {
         static double t0;
         if (!t0) t0 = now_seconds();
         fprintf(stderr, "hengevm: pvg-metal: %llu execs, %llu draws, %llu failed, %llu synced, %llu remaps, %.0f s; encoding %.2f s, waiting for the GPU %.2f s\n", (unsigned long long)execs, (unsigned long long)draws, (unsigned long long)failed, (unsigned long long)synced, (unsigned long long)remaps, now_seconds() - t0, encode_time, gpu_wait_time);
+        {   /* memory: what the GPU holds for the guest, and the guest memory mapped into Metal as surfaces */
+            uint64_t mapped = 0;
+            for (HvObject *sf in surfaces.allValues) mapped += sf->length;
+            fprintf(stderr, "hengevm: pvg-metal: memory: GPU allocations %llu MB, %lu surfaces mapped %llu MB, heaps made %llu MB\n",
+                    (unsigned long long)(device.currentAllocatedSize >> 20), (unsigned long)surfaces.count,
+                    (unsigned long long)(mapped >> 20), (unsigned long long)(heap_bytes >> 20));
+        }
         encode_time = gpu_wait_time = 0;
     }
     return YES;
