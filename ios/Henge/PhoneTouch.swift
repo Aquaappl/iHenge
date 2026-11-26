@@ -7,6 +7,15 @@ import UIKit
 /// moved up sends Home (the engine turns it into Cmd+H: iOS starts no home swipe from it).
 struct PhoneTouch: UIViewRepresentable {
     func makeUIView(context: Context) -> Surface { Surface() }
+
+    /// The Home button: Cmd+H on the guest's USB keyboard, which iOS takes as Home (and, on the lock screen, unlock).
+    static func home() {
+        HengeLog.log("input", "home button")
+        henge_vm_key_hid(0xe3, 1) // left GUI (Cmd)
+        henge_vm_key_hid(0x0b, 1) // H
+        henge_vm_key_hid(0x0b, 0)
+        henge_vm_key_hid(0xe3, 0)
+    }
     func updateUIView(_ view: Surface, context: Context) {}
 
     final class Surface: UIView {
