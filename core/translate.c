@@ -93,7 +93,9 @@ typedef struct {
     uint32_t flags;
     int slow_mem;
     uint64_t page;       /* guest VA of the 16 KB page the block is in */
-    int no_ijc;          /* indirect branches always go to the dispatcher (breakpoints, tests' stop PC) */
+    int no_ijc;          /* indirect branches always go to the dispatcher (breakpoints, tests' stop PC, guarded code) */
+    int no_chain;        /* no chained exits at all (!m->chain) */
+    int guarded;         /* HV_BLOCK_GUARDED: kept out of the branch caches */
     HvMachine *m;
     uint64_t cur_pc;     /* guest PC of the instruction being translated (or whose out-of-line exit is) */
     /* Grouped accesses (Group). */
@@ -369,7 +371,7 @@ static uint64_t cross_addend(Emit *e, uint64_t target) {
     static int off = -1; /* HV_NO_XCHAIN: exits to other pages always look the target up */
     if (off < 0) off = getenv("HV_NO_XCHAIN") != NULL;
     HvCpu *cpu = hv_self;
-    if (off || !cpu || e->no_ijc || !e->m->chain) return 0;
+    if (off || !cpu || e->no_chain) return 0;
     /* This CPU's TLB first: an entry there is the mapping now. */
     int table = hv_block_tlb_table(e->flags);
     const HvTlbEntry *te = hv_tlb_ent(cpu, (target >> HV_TLB_PAGE_BITS) & (HV_TLB_SIZE - 1), table);
@@ -1429,7 +1431,7 @@ static void put_pstate_bit(Emit *e, int rt, int bit, int read) {
    the new flags' branch cache. PAN: the bit, then likewise. Returns 0 if not
    handled, 1 if the block carries on, 2 if it ended. */
 static int translate_msr_inline(Emit *e, uint32_t insn, uint64_t pc) {
-    if (!(e->flags & HV_BLOCK_EL1) || e->no_ijc) return 0;
+    if (!(e->flags & HV_BLOCK_EL1) || e->no_chain) return 0;
     int imm_form = ((insn >> 19) & 3) == 0;
     uint32_t field = ((insn >> 16) & 7) << 3 | ((insn >> 5) & 7), imm = (insn >> 8) & 0xf;
     uint32_t reg = (insn >> 5) & 0xffff;
@@ -1455,6 +1457,8 @@ static int translate_msr_inline(Emit *e, uint32_t insn, uint64_t pc) {
         }
         return 1;
     }
+    /* SPSel swaps SP through SP_EL0/SP_EL1, but guarded code's EL1 SP is SP_GL1: the helper does that (it hung sepOS). */
+    if (e->guarded && ((!imm_form && reg == (3u << 14 | 0u << 11 | 4u << 7 | 2u << 3 | 0u)) || (imm_form && field == 005))) return 0;
     if (!imm_form && reg == (3u << 14 | 0u << 11 | 4u << 7 | 2u << 3 | 0u)) { /* MSR SPSel, Xt: bit 0 picks, at run time */
         int rt = insn & 0x1f;
         uint32_t flags = e->flags, to_set = 0;
@@ -1727,7 +1731,7 @@ static int translate_one(Emit *e, uint32_t insn, uint64_t pc) {
                cache reads the new salt at run time, and a change that matters to
                chained exits sets exit_req. */
             if (!imm_form && reg != SR(3, 0, 1, 0, 2) && reg != SR(3, 0, 4, 2, 3) && reg != SR(3, 0, 4, 2, 0) &&
-                reg != SR(3, 0, 2, 0, 1) && reg != SR(3, 0, 2, 0, 2) && !e->no_ijc) {
+                reg != SR(3, 0, 2, 0, 1) && reg != SR(3, 0, 2, 0, 2) && !e->no_chain) {
                 put_branch_exit(e, pc + 4, 0);
                 return 1;
             }
@@ -1760,7 +1764,7 @@ static int translate_one(Emit *e, uint32_t insn, uint64_t pc) {
         if (crn == 7 && ((crm != 1 && crm != 5) || (op1 == 3 && crm == 5 && op2 == 1))) return 0;
         static int tlbi_leaves = -1; /* HV_TLBI_LEAVES: every TLBI ends its block, as before */
         if (tlbi_leaves < 0) tlbi_leaves = getenv("HV_TLBI_LEAVES") != NULL;
-        if (crn == 8 && !e->no_ijc && !tlbi_leaves) return 0;
+        if (crn == 8 && !e->no_chain && !tlbi_leaves) return 0;
         put_exit(e, pc + 4);
         return 1;
     }
@@ -1774,7 +1778,7 @@ static int translate_one(Emit *e, uint32_t insn, uint64_t pc) {
             /* Writes that change how blocks are translated already left. What is
                left to synchronise is code invalidation, which sets exit_req: the
                chainable exit checks it. */
-            if (e->no_ijc) put_exit(e, pc + 4);
+            if (e->no_chain) put_exit(e, pc + 4);
             else put_branch_exit(e, pc + 4, 0);
             return 1;
         }
@@ -1785,7 +1789,7 @@ static int translate_one(Emit *e, uint32_t insn, uint64_t pc) {
         if (((insn >> 5) & 7) == 3 || ((insn >> 12) & 0xf) == 1) put_helper(e, pc, insn, HV_OP_WFI); /* WFI, WFIT, WFET */
         else { /* WFE: waiting for another CPU; the helper waits for the monitored word, then the block goes on */
             put_helper(e, pc, insn, HV_OP_WFE);
-            if (e->no_ijc) put_exit(e, pc + 4);
+            if (e->no_chain) put_exit(e, pc + 4);
             else put_branch_exit(e, pc + 4, 0); /* checks exit_req: the wait may have ended for a request */
             return 1;
         }
@@ -2031,7 +2035,9 @@ static int translate_emit(HvMachine *m, HvBlock *b, const uint32_t *code, uint32
     e->flags = b->flags;
     e->slow_mem = m->slow_mem || hv_knob[HV_K_PREDSTAT]; /* HV_PREDSTAT (measuring): every access through hv_mem_emulate */
     e->page = b->va & ~((1ull << HV_TLB_PAGE_BITS) - 1);
-    e->no_ijc = !m->chain || (b->flags & HV_BLOCK_GUARDED); /* guarded code stays out of the branch caches */
+    e->no_chain = !m->chain;
+    e->guarded = (b->flags & HV_BLOCK_GUARDED) != 0;
+    e->no_ijc = e->no_chain || e->guarded; /* guarded code stays out of the branch caches */
     e->m = m;
     e->nogroup = nogroup;
     e->u_live = e->u_prev = 0;
