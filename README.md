@@ -4,7 +4,7 @@
 
 <h1 align="center">Henge</h1>
 
-<p align="center">macOS on your iPhone and iPad.</p>
+<p align="center">iOS on your iPhone and iPad.</p>
 
 <p align="center">
   <a href="#install">Install</a>
@@ -21,7 +21,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Leviidev/Henge?style=flat-square&color=2E6BFF&labelColor=111111" alt="GPL-2.0-or-later"></a>
 </p>
 
-Download macOS, install it on the device, and use it.
+install vphone on the device, and use it.
 
 - **Own emulator** — iOS gives apps no hypervisor, so Henge runs the Mac's arm64 code through its own JIT, with its own MMU and devices. It doesn't use QEMU or Virtualization.framework.
 - **Installs on the device** — Henge downloads Apple's restore image and restores it the way a Mac does. No Mac needed, and nothing is decrypted or patched.
