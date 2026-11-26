@@ -171,6 +171,7 @@ struct SessionView: View {
         }
         .statusBarHidden(zoomed || Device.isPad)
         .persistentSystemOverlays(.hidden)
+        .defersSystemGestures(on: mac.isPhone ? .vertical : [])  // the guest's own home swipe comes first; a second one leaves Henge
         .sheet(isPresented: $showDetails) { details }
         .confirmationDialog("Shut down \(mac.name)?", isPresented: $confirmStop, titleVisibility: .visible) {
             Button("Shut Down", role: .destructive) { finish() }
