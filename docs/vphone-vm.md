@@ -54,7 +54,7 @@ M8 (2026-11-26): touch and vphoned.
 
 - The touchscreen takes `tp ID PHASE X Y` lines in `HV_INPUT_FILE` (phase 0 down, 1 move, 2 up; X and Y
   over 0..0x7fff of the screen, top left 0). The file is read every 200 ms, so leave 0.3 s between a
-  tap's down and up. A drag from the bottom 5% up by 12% or more also sends Cmd+H (`HV_TOUCH_HOME=0`: off).
+  tap's down and up. A drag from the bottom 1% up by 12% or more also sends Cmd+H (`HV_TOUCH_HOME=0`: off).
   `HV_TS_LOG=1` prints each touch report.
 - vphoned (vphone-cli's guest daemon) is reachable through the vsock socket: `tools/vphoned.py GET
   /v1/health`, `POST /v1/rpc '{"method":"screen.unlock","params":{},"id":1}'`,

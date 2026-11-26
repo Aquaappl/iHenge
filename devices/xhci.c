@@ -1134,9 +1134,9 @@ static struct HvTpFinger *tp_new_finger(HvXhci *x) {
 }
 
 /* The touchscreen's Home: iOS starts no home swipe from this digitizer, so a finger
-   that goes down on the bottom 5% (a phone's own home swipe takes the last 1-2%) and comes up at least 12% higher sends the
+   that goes down on the bottom 1% and comes up at least 12% higher sends the
    keyboard's Cmd+H, as qemu-vphone does (HV_TOUCH_HOME=0: off). */
-#define TS_EDGE_Y (0x7fff - 0x7fff / 20)
+#define TS_EDGE_Y (0x7fff - 0x7fff / 100)
 #define TS_HOME_RISE (0x7fff * 12 / 100)
 
 void hv_xhci_touch(HvXhci *x, int id, int phase, int px, int py, uint32_t ts_ms) {
