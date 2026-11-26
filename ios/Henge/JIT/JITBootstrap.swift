@@ -106,7 +106,7 @@ enum JITBootstrap {
         // buffer with MAP_JIT and the translation layer makes its region itself.
         if canGrantOwnJIT && !stikDebugMayServiceTraps {
             selfGrantTried = true
-            if mapJITWorks {
+            if mapJITWorks && !onMac { /* on a Mac the engine still needs the region itself (henge_vm_boot_iphone) */
                 HengeLog.log("jit", "not trapping for a JIT region (no StikDebug); MAP_JIT executes here")
                 lastFailure = nil
                 return true
@@ -351,9 +351,13 @@ enum JITBootstrap {
     /// debugger to hand it out: true before iOS 26, which is when the Trusted Execution Monitor arrived. It is what makes
     /// TrollStore and jailbreaks enough, without StikDebug.
     static var canGrantOwnJIT: Bool {
+        if onMac { return true } /* an iPhone app on an Apple silicon Mac makes its own (testing on a Mac) */
         if #available(iOS 26, *) { return false }
         return true
     }
+
+    /// Henge running as an iPhone app on an Apple silicon Mac: no TXM, and memory it maps can be made executable.
+    static var onMac: Bool { ProcessInfo.processInfo.isiOSAppOnMac }
 
     /// henge-jit.js as standard base64, which Built-in StikJIT's custom script takes.
     static var scriptBase64: String? {
