@@ -115,6 +115,25 @@ int henge_vm_boot(const char *rom, const char *disk, const char *aux, uint64_t e
     return boot_or_resume(rom, disk, aux, ecid, seed, ram_mb, cpus, NULL, NULL, err, errlen);
 }
 
+int henge_vm_boot_iphone(const char *rom, const char *sep_rom, const char *sep_storage, const char *disk, const char *aux,
+                         uint64_t ecid, uint64_t ram_mb, int cpus, char *err, size_t errlen) {
+    if (begin_start(err, errlen)) return -1;
+    HengeDualMapping *jit = henge_ios_jit_get_mapping();
+    if (!jit || !jit->rw_addr) {
+        snprintf(err, errlen, "Henge has no JIT region. Turn on JIT first.");
+        return failed_start();
+    }
+    /* The SEP takes the end of the granted region (64 MB, its default); the AP the rest. */
+    HvVmConfig c = {.rom = rom, .machine = HV_MACHINE_VRESEARCH101, .sep_rom = sep_rom, .sep_storage = sep_storage,
+                    .disk = disk, .aux = aux, .ecid = ecid, .ram_mb = ram_mb, .ncpus = cpus, .log = 1, .no_sound = 1,
+                    .jit_rx = jit->rx_addr, .jit_rw = jit->rw_addr, .jit_bytes = jit->size};
+    fprintf(stderr, "henge: booting the iPhone with %d CPUs, %llu MB RAM, a %zu MB JIT region\n", cpus,
+            (unsigned long long)ram_mb, jit->size >> 20);
+    if (hv_vm_create(&c, err, errlen) != 0) return failed_start();
+    if (getenv("HV_STATS")) hv_vm_machine()->stats_interval = atoi(getenv("HV_STATS"));
+    return started(err, errlen);
+}
+
 int henge_vm_resume(const char *rom, const char *disk, const char *aux, uint64_t ecid, uint64_t seed, uint64_t ram_mb,
                     int cpus, const char *path, const char *ident, char *err, size_t errlen) {
     return boot_or_resume(rom, disk, aux, ecid, seed, ram_mb, cpus, path, ident, err, errlen);

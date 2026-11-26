@@ -56,7 +56,8 @@ struct SessionView: View {
             let full = CGSize(width: geo.size.width + insets.leading + insets.trailing,
                               height: geo.size.height + insets.top + insets.bottom)
             let landscape = full.width > full.height
-            let layout = Layout(full: full, insets: insets, landscape: landscape, zoomed: zoomed, typing: typing, centre: zoomCentre, aspect: mac.aspect)
+            let layout = Layout(full: full, insets: insets, landscape: landscape, zoomed: zoomed, typing: typing, centre: zoomCentre, aspect: mac.aspect,
+                                phone: mac.isPhone)
             ZStack(alignment: .topLeading) {
                 (landscape || zoomed ? Color.black : Desk.page)
                 // One view in every layout: it holds the layer the engine draws into.
@@ -85,9 +86,15 @@ struct SessionView: View {
                     }
                     .position(x: layout.screen.midX, y: layout.screen.midY)
                 if state != 2 {
-                    Trackpad()
-                        .frame(width: layout.touch.width, height: layout.touch.height)
-                        .position(x: layout.touch.midX, y: layout.touch.midY)
+                    if mac.isPhone {
+                        PhoneTouch()
+                            .frame(width: layout.screen.width, height: layout.screen.height)
+                            .position(x: layout.screen.midX, y: layout.screen.midY)
+                    } else {
+                        Trackpad()
+                            .frame(width: layout.touch.width, height: layout.touch.height)
+                            .position(x: layout.touch.midX, y: layout.touch.midY)
+                    }
                     if inputMode == .volumeButtons && volumeMode == .intercept {
                         // The capture interaction must live in the SwiftUI hierarchy to receive
                         // the volume-button events; it passes touches through to the trackpad.
@@ -230,10 +237,21 @@ struct SessionView: View {
             CGSize(width: min(touch.width / max(screen.width, 1), 1), height: min(touch.height / max(screen.height, 1), 1))
         }
 
-        init(full: CGSize, insets: EdgeInsets, landscape: Bool, zoomed: Bool, typing: Bool, centre: CGPoint, aspect: CGFloat) {
+        init(full: CGSize, insets: EdgeInsets, landscape: Bool, zoomed: Bool, typing: Bool, centre: CGPoint, aspect: CGFloat,
+             phone: Bool = false) {
             self.insets = insets
             let big = full.height >= 600 // an iPad on its side, or a window on one
-            if zoomed {
+            if phone && !zoomed {
+                // A virtual iPhone: its screen as big as fits, touched where it is shown (PhoneTouch).
+                let room = full.height - insets.top - insets.bottom
+                let height = min(room, full.width / aspect)
+                let width = height * aspect
+                screen = CGRect(x: (full.width - width) / 2, y: insets.top + (room - height) / 2, width: width, height: height)
+                touch = screen
+                fillsPhone = true
+                toolsY = 0
+                pad = .zero
+            } else if zoomed {
                 // Upright, as tall as the device. On its side, bigger than it fits: a big screen needs less.
                 let height = landscape ? full.height * (big ? 1.5 : 2) : max(full.height - insets.bottom, full.width / aspect)
                 let width = height * aspect
@@ -605,7 +623,11 @@ struct SessionView: View {
             henge_vm_set_display_mm(0, 0)
         }
         HengeLog.log("session", "screen \(mac.screen.width)x\(mac.screen.height) retina \(mac.isRetina)")
-        if mac.reportHostIdentity == true {
+        if mac.isPhone {
+            henge_vm_set_identity(nil, nil, nil)
+            // vphoned's channel (vsock): a short path, as a Unix socket's must be.
+            setenv("HV_VSOCK_DIR", (NSTemporaryDirectory() as NSString).appendingPathComponent("vs"), 1)
+        } else if mac.reportHostIdentity == true {
             let modelID = Device.snappedModelIdentifier(forOS: mac.osName)
             henge_vm_set_identity(Device.chipName, Device.marketingName,
                                   mac.reportHostModelID == true ? modelID : nil)
@@ -614,7 +636,15 @@ struct SessionView: View {
             henge_vm_set_identity(nil, nil, nil)
         }
         var rc: Int32 = -1
-        if InstantResume.enabled, let at = InstantResume.saved(for: mac, ramMB: ram, cpus: cpus) {
+        if mac.isPhone {
+            // Instant resume saves one machine; the iPhone's SEP is a second one: it always starts cold.
+            rc = henge_vm_boot_iphone(mac.rom.path, mac.sepRom.path, mac.sepStorage.path, mac.disk.path, mac.aux.path,
+                                      mac.ecid, ram, Int32(cpus), &buffer, buffer.count)
+            if rc != 0 {
+                error = String(cString: buffer)
+                return
+            }
+        } else if InstantResume.enabled, let at = InstantResume.saved(for: mac, ramMB: ram, cpus: cpus) {
             HengeLog.log("resume", "picking up the Mac saved \(Int(Date().timeIntervalSince(at))) s ago")
             let t0 = Date()
             rc = henge_vm_resume(mac.rom.path, mac.disk.path, mac.aux.path, mac.ecid, mac.seed, ram, Int32(cpus),
@@ -626,7 +656,7 @@ struct SessionView: View {
                 buffer = [CChar](repeating: 0, count: 256)
             }
         }
-        InstantResume.discard(for: mac) /* used or out of date: the disk moves on from here */
+        if !mac.isPhone { InstantResume.discard(for: mac) } /* used or out of date: the disk moves on from here */
         if rc != 0 {
             rc = henge_vm_boot(mac.rom.path, mac.disk.path, mac.aux.path, mac.ecid, mac.seed, ram, Int32(cpus), &buffer, buffer.count)
         }

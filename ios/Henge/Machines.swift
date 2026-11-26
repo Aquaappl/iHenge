@@ -24,14 +24,25 @@ struct VirtualMac: Identifiable, Codable, Hashable {
     /// With reportHostIdentity: also report the device's model identifier (hw.model).
     /// Experimental — it may bring the device's icon, and may confuse macOS.
     var reportHostModelID: Bool?
-    var isRetina: Bool { Device.isPad && (retina ?? false) }
-    var screen: (width: Int, height: Int) { isRetina ? Device.retinaScreen : (screenWidth ?? 1920, screenHeight ?? 1080) }
+    /// "iphone": a virtual iPhone made by vphone-cli (vresearch101); nil: a Mac.
+    var kind: String?
+    var isPhone: Bool { kind == "iphone" }
+    var isRetina: Bool { !isPhone && Device.isPad && (retina ?? false) }
+    var screen: (width: Int, height: Int) {
+        isPhone ? (screenWidth ?? 1206, screenHeight ?? 2622)
+            : isRetina ? Device.retinaScreen : (screenWidth ?? 1920, screenHeight ?? 1080)
+    }
     var aspect: CGFloat { CGFloat(screen.width) / CGFloat(screen.height) }
 
     var directory: URL { Machines.directory(for: id) }
-    var rom: URL { directory.appendingPathComponent("AVPBooter.vmapple2.bin") }
+    var rom: URL { directory.appendingPathComponent(isPhone ? "OpenAVB.bin" : "AVPBooter.vmapple2.bin") }
     var disk: URL { directory.appendingPathComponent("disk.img") }
-    var aux: URL { directory.appendingPathComponent("auxiliary.bin") }
+    var aux: URL { directory.appendingPathComponent(isPhone ? "nvram.bin" : "auxiliary.bin") }
+    /// The iPhone's SEP: its boot ROM and its storage.
+    var sepRom: URL { directory.appendingPathComponent("OpenSEP.bin") }
+    var sepStorage: URL { directory.appendingPathComponent("SEPStorage") }
+    /// The files besides the disk that make the machine (what an exported folder holds).
+    var files: [String] { Machines.files(phone: isPhone) }
 }
 
 /// How much RAM a Mac gets. The engine first asks the kernel to leave it out of Henge's footprint,
@@ -58,6 +69,9 @@ private struct MachineFile: Codable {
     var ecid: UInt64
     var seed: UInt64?
     var ramMB: Int?
+    var kind: String?
+    var screenWidth: Int?
+    var screenHeight: Int?
 }
 
 @MainActor
@@ -70,6 +84,9 @@ final class Machines: ObservableObject {
 
     /// The files an exported machine folder holds; its disk is disk.img, or disk.img.hvsparse (tools/export_ios.sh packs it).
     static let required = ["AVPBooter.vmapple2.bin", "auxiliary.bin", "machine.json"]
+    /// The same for a virtual iPhone (tools/export_iphone.sh): vphone-cli's VM bundle files.
+    static let phoneRequired = ["OpenAVB.bin", "OpenSEP.bin", "SEPStorage", "nvram.bin", "machine.json"]
+    nonisolated static func files(phone: Bool) -> [String] { phone ? phoneRequired : required }
     static let packedDisk = "disk.img.hvsparse"
 
     nonisolated static func hasDisk(_ folder: URL) -> Bool {
@@ -153,7 +170,10 @@ final class Machines: ObservableObject {
 
     private func collect() async {
         guard importing == nil, let items = try? FileManager.default.contentsOfDirectory(at: Self.inbox, includingPropertiesForKeys: nil) else { return }
-        for folder in items where Self.hasDisk(folder) && Self.required.allSatisfy({ FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }) {
+        let has = { (folder: URL, names: [String]) in
+            names.allSatisfy { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
+        }
+        for folder in items where Self.hasDisk(folder) && (has(folder, Self.required) || has(folder, Self.phoneRequired)) {
             await adopt(folder, move: true)
         }
     }
@@ -171,17 +191,23 @@ final class Machines: ObservableObject {
         do {
             let data = try Data(contentsOf: folder.appendingPathComponent("machine.json"))
             let info = try JSONDecoder().decode(MachineFile.self, from: data)
-            let missing = Self.required.filter { !FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
+            let phone = info.kind == "iphone"
+            let missing = Self.files(phone: phone).filter { !FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path) }
             guard missing.isEmpty, Self.hasDisk(folder) else { throw message("The folder is missing \((missing + (Self.hasDisk(folder) ? [] : ["disk.img"])).joined(separator: ", ")).") }
             var mac = VirtualMac(name: info.name ?? folder.lastPathComponent, ecid: info.ecid, seed: info.seed ?? 0,
                                  ramMB: info.ramMB ?? 2048, diskBytes: 0)
+            if phone {
+                mac.kind = "iphone"
+                mac.screenWidth = info.screenWidth ?? 1206
+                mac.screenHeight = info.screenHeight ?? 2622
+            }
             importing = mac.name
             unpacked = 0
             let dest = mac.directory
             let fm = FileManager.default
             try fm.createDirectory(at: dest, withIntermediateDirectories: true)
             excludeFromBackup()
-            for name in ["AVPBooter.vmapple2.bin", "auxiliary.bin", "machine.json", "disk.img"] {
+            for name in mac.files + ["disk.img"] {
                 let from = folder.appendingPathComponent(name)
                 guard fm.fileExists(atPath: from.path) else { continue }
                 if move { try fm.moveItem(at: from, to: dest.appendingPathComponent(name)) }
@@ -251,9 +277,15 @@ final class Machines: ObservableObject {
         }
         try fm.createDirectory(at: partial, withIntermediateDirectories: true)
         do {
-            try fm.copyItem(at: mac.rom, to: partial.appendingPathComponent("AVPBooter.vmapple2.bin"))
-            try fm.copyItem(at: mac.aux, to: partial.appendingPathComponent("auxiliary.bin"))
-            let info: [String: Any] = ["name": mac.name, "ecid": mac.ecid, "seed": mac.seed, "ramMB": mac.ramMB]
+            for name in mac.files where name != "machine.json" {
+                try fm.copyItem(at: mac.directory.appendingPathComponent(name), to: partial.appendingPathComponent(name))
+            }
+            var info: [String: Any] = ["name": mac.name, "ecid": mac.ecid, "seed": mac.seed, "ramMB": mac.ramMB]
+            if mac.isPhone {
+                info["kind"] = "iphone"
+                info["screenWidth"] = mac.screen.width
+                info["screenHeight"] = mac.screen.height
+            }
             try JSONSerialization.data(withJSONObject: info).write(to: partial.appendingPathComponent("machine.json"))
             let source = mac.disk.path, target = partial.appendingPathComponent(Self.packedDisk).path
             let ok = await Task.detached { () -> Bool in
