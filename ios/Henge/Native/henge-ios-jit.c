@@ -376,9 +376,12 @@ static void henge_ios_jit_release_low_hold(size_t bytes);
 static HengeDualMapping henge_self_dual_mapping(size_t bytes)
 {
     HengeDualMapping none = { NULL, NULL, 0 };
-    if (__builtin_available(iOS 26.0, *)) {
-        HENGE_LOG("self: iOS 26 enforces TXM; only a debugger can grant executable memory here");
-        return none;
+    /* HENGE_ON_MAC (set by the app): an iPhone app on an Apple silicon Mac, which has no TXM. */
+    if (!getenv("HENGE_ON_MAC")) {
+        if (__builtin_available(iOS 26.0, *)) {
+            HENGE_LOG("self: iOS 26 enforces TXM; only a debugger can grant executable memory here");
+            return none;
+        }
     }
     size_t size = (bytes + 0x3fff) & ~(size_t)0x3fff;
     /* No debugger will take the reserved block on this route, and it would keep this mapping out of the low window. */

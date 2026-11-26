@@ -106,7 +106,7 @@ enum JITBootstrap {
         // buffer with MAP_JIT and the translation layer makes its region itself.
         if canGrantOwnJIT && !stikDebugMayServiceTraps {
             selfGrantTried = true
-            if mapJITWorks && !onMac { /* on a Mac the engine still needs the region itself (henge_vm_boot_iphone) */
+            if !onMac && mapJITWorks { /* on a Mac the engine still needs the region itself (henge_vm_boot_iphone) */
                 HengeLog.log("jit", "not trapping for a JIT region (no StikDebug); MAP_JIT executes here")
                 lastFailure = nil
                 return true
@@ -115,6 +115,7 @@ enum JITBootstrap {
             // process or a jailbreak allows -- made here, with no brk for an attach that answers none (#148)
             HengeLog.log("jit", "not trapping for a JIT region (no StikDebug); MAP_JIT does not execute here, trying plain memory")
             prepareCompressedHeap()
+            if onMac { setenv("HENGE_ON_MAC", "1", 1) }
             if henge_ios_jit_prewarm_self(jitBytes) {
                 prewarmed = true
                 lastFailure = nil
