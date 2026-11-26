@@ -17,6 +17,11 @@ struct PhoneTouch: UIViewRepresentable {
         let x: Int32 = 16384
         func now() -> UInt32 { UInt32(truncatingIfNeeded: Int(ProcessInfo.processInfo.systemUptime * 1000)) }
         Task.detached {
+            // Locked or asleep: vphoned unlocks it (the swipe alone did not on the 13 mini). Otherwise, or before vphoned
+            // is up, the swipe, which is Home.
+            let unlocked = henge_vm_unlock()
+            HengeLog.log("input", "home: vphoned unlock \(unlocked == 1 ? "unlocked it" : unlocked == 0 ? "was not locked" : "did not answer")")
+            if unlocked == 1 { return }
             for (i, y) in ys.enumerated() {
                 let ts = now()
                 henge_vm_touch(15, i == 0 ? 0 : 1, x, y, ts)

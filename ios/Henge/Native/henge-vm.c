@@ -527,3 +527,48 @@ uint64_t henge_largest_mapping_mb(void) {
     }
     return 0;
 }
+
+/* ---- the virtual iPhone's lock screen, through vphoned ---- */
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/time.h>
+
+/* vphoned (vphone-cli's daemon in the guest) on vsock port 1339, reached through the vsock device's Unix socket
+   ($HV_VSOCK_DIR/3.sock): "CONNECT 1339", "OK n", then HTTP. Its screen.unlock wakes and unlocks the iPhone. */
+int henge_vm_unlock(void) {
+    const char *dir = getenv("HV_VSOCK_DIR");
+    struct sockaddr_un a = {.sun_family = AF_UNIX};
+    snprintf(a.sun_path, sizeof a.sun_path, "%s/3.sock", dir ? dir : "/tmp/hengevm-vsock");
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct timeval tv = {.tv_sec = 8};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    if (connect(fd, (struct sockaddr *)&a, sizeof a) != 0) return close(fd), -1;
+    const char *hello = "CONNECT 1339\n";
+    if (write(fd, hello, strlen(hello)) < 0) return close(fd), -1;
+    char line[64];
+    size_t n = 0;
+    while (n < sizeof line - 1) {
+        if (read(fd, line + n, 1) != 1) return close(fd), -1;
+        if (line[n++] == '\n') break;
+    }
+    line[n] = 0;
+    if (strncmp(line, "OK", 2)) return close(fd), -1;
+    const char *body = "{\"method\":\"screen.unlock\",\"params\":{},\"id\":1}";
+    char req[512];
+    int len = snprintf(req, sizeof req,
+                       "POST /v1/rpc HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\n"
+                       "Content-Length: %zu\r\n\r\n%s", strlen(body), body);
+    if (write(fd, req, (size_t)len) != len) return close(fd), -1;
+    char resp[2048];
+    size_t got = 0;
+    ssize_t k;
+    while (got < sizeof resp - 1 && (k = read(fd, resp + got, sizeof resp - 1 - got)) > 0) got += (size_t)k;
+    resp[got] = 0;
+    close(fd);
+    fprintf(stderr, "henge: vphoned screen.unlock: %.200s\n", strstr(resp, "\r\n\r\n") ? strstr(resp, "\r\n\r\n") + 4 : resp);
+    if (!strstr(resp, "\"result\"")) return -1;
+    return strstr(resp, "\"was_locked\":true") || strstr(resp, "\"was_screen_off\":true") ? 1 : 0;
+}

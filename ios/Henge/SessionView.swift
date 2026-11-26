@@ -90,16 +90,6 @@ struct SessionView: View {
                         PhoneTouch()
                             .frame(width: layout.screen.width, height: layout.screen.height)
                             .position(x: layout.screen.midX, y: layout.screen.midY)
-                        // Home (and unlock from the lock screen): iOS starts no home swipe from this touchscreen.
-                        Button { PhoneTouch.home() } label: {
-                            Image(systemName: "house.fill")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.9))
-                                .frame(width: 44, height: 44)
-                                .background(.black.opacity(0.35), in: Circle())
-                        }
-                        .accessibilityLabel("Home")
-                        .position(x: layout.screen.maxX - 34, y: layout.screen.maxY - 90)
                     } else {
                         Trackpad()
                             .frame(width: layout.touch.width, height: layout.touch.height)
@@ -327,6 +317,10 @@ struct SessionView: View {
                 tool("info.circle", "Details") { showDetails = true }
                 Spacer()
                 tool("power", "Shut down", tint: Desk.bad) { stopTapped() }
+                if mac.isPhone {
+                    Spacer()
+                    tool("circle", "Home") { PhoneTouch.home() } // also unlocks
+                }
             }
             .padding(.horizontal, 22)
             .frame(width: layout.pad.width, height: 54)
@@ -419,6 +413,7 @@ struct SessionView: View {
             tool("info.circle", "Details", tint: .white) { showDetails = true }
             Rectangle().fill(Color.white.opacity(0.3)).frame(width: 1, height: 22).padding(.horizontal, 4)
             tool("power", "Shut down", tint: Desk.bad) { stopTapped() }
+            if mac.isPhone { tool("circle", "Home", tint: .white) { PhoneTouch.home() } } // also unlocks
         }
         .padding(.horizontal, 8)
         .frame(height: 50)
