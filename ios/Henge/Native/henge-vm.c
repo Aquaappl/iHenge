@@ -590,8 +590,42 @@ int henge_vm_unlock(void) {
 int henge_vm_home(void) {
     int r = henge_vm_unlock();
     if (r != 0) return r; /* it unlocked (1), or vphoned did not answer (-1) */
-    char out[512];
-    if (vphoned_request("/v1/rpc", "{\"method\":\"input.button\",\"params\":{\"name\":\"home\"},\"id\":2}", 30, out, sizeof out)) return -1;
+    /* Not locked: the app in front is closed (as from the app switcher), then Home. */
+    char out[1024], id[256] = "";
+    if (vphoned_request("/v1/rpc", "{\"method\":\"apps.foreground\",\"params\":{},\"id\":2}", 30, out, sizeof out) == 0) {
+        const char *p = strstr(out, "\"bundle_id\":\"");
+        if (p) {
+            p += 13;
+            size_t n = 0;
+            while (p[n] && p[n] != '"' && n < sizeof id - 1 &&
+                   (p[n] == '.' || p[n] == '-' || p[n] == '_' || (p[n] >= '0' && p[n] <= '9') || ((p[n] | 32) >= 'a' && (p[n] | 32) <= 'z')))
+                n++;
+            if (p[n] == '"') memcpy(id, p, n), id[n] = 0;
+        }
+    }
+    if (id[0] && strcmp(id, "com.apple.springboard")) {
+        char body[512];
+        snprintf(body, sizeof body, "{\"method\":\"apps.terminate\",\"params\":{\"bundle_id\":\"%s\"},\"id\":3}", id);
+        vphoned_request("/v1/rpc", body, 30, out, sizeof out);
+        fprintf(stderr, "henge: vphoned apps.terminate %s: %.160s\n", id, out);
+    }
+    if (vphoned_request("/v1/rpc", "{\"method\":\"input.button\",\"params\":{\"name\":\"home\"},\"id\":4}", 30, out, sizeof out)) return -1;
     fprintf(stderr, "henge: vphoned input.button home: %.200s\n", out);
     return strstr(out, "\"result\"") ? 2 : -1;
+}
+
+/* Lighter for the emulated GPU and CPUs: Reduce Motion and Reduce Transparency, set once through vphoned
+   (they take effect as SpringBoard picks them up, at the latest on the next boot). 0, or -1 without vphoned. */
+int henge_vm_lighten(void) {
+    static const char *keys[] = {"ReduceMotionEnabled", "EnhancedBackgroundContrastEnabled"};
+    char out[512], body[256];
+    for (int i = 0; i < 2; i++) {
+        snprintf(body, sizeof body, "{\"method\":\"settings.get\",\"params\":{\"domain\":\"com.apple.Accessibility\",\"key\":\"%s\"},\"id\":5}", keys[i]);
+        if (vphoned_request("/v1/rpc", body, 30, out, sizeof out)) return -1;
+        if (strstr(out, "\"value\":1")) continue;
+        snprintf(body, sizeof body, "{\"method\":\"settings.set\",\"params\":{\"domain\":\"com.apple.Accessibility\",\"key\":\"%s\",\"value\":1,\"type\":\"int\"},\"id\":6}", keys[i]);
+        if (vphoned_request("/v1/rpc", body, 60, out, sizeof out)) return -1;
+        fprintf(stderr, "henge: vphoned set %s: %.120s\n", keys[i], out);
+    }
+    return 0;
 }

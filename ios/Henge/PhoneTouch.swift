@@ -14,7 +14,7 @@ struct PhoneTouch: UIViewRepresentable {
         HengeLog.log("input", "home button")
         Task.detached {
             let r = henge_vm_home()
-            HengeLog.log("input", "home: " + (r == 1 ? "unlocked" : r == 2 ? "pressed Home" : "vphoned did not answer"))
+            HengeLog.log("input", "home: " + (r == 1 ? "unlocked" : r == 2 ? "closed the app and pressed Home" : "vphoned did not answer"))
         }
     }
 
