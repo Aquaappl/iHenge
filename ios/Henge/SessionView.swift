@@ -11,6 +11,7 @@ struct SessionView: View {
     @StateObject private var display = DisplayRouter()
     @State private var error: String?
     @State private var state: Int32 = 0
+    @State private var homeReady = false // the iPhone's vphoned answers: the Home button works
     @State private var bootAttempt = 0
     @State private var cpusOn: Int32 = 0
     @State private var userCode = false
@@ -171,6 +172,18 @@ struct SessionView: View {
         }
         .statusBarHidden(zoomed || Device.isPad)
         .persistentSystemOverlays(.hidden)
+        .task(id: state) { // the Home button waits for vphoned, which starts a while after the lock screen
+            homeReady = false
+            guard mac.isPhone, state == 1 else { return }
+            while !Task.isCancelled && !homeReady {
+                if await PhoneTouch.vphonedReady() {
+                    homeReady = true
+                    HengeLog.log("input", "vphoned answers: the Home button is on")
+                } else {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                }
+            }
+        }
         .sheet(isPresented: $showDetails) { details }
         .confirmationDialog("Shut down \(mac.name)?", isPresented: $confirmStop, titleVisibility: .visible) {
             Button("Shut Down", role: .destructive) { finish() }
@@ -320,6 +333,7 @@ struct SessionView: View {
                 if mac.isPhone {
                     Spacer()
                     tool("circle", "Home") { PhoneTouch.home() } // also unlocks
+                        .disabled(!homeReady).opacity(homeReady ? 1 : 0.35)
                 }
             }
             .padding(.horizontal, 22)
@@ -413,7 +427,10 @@ struct SessionView: View {
             tool("info.circle", "Details", tint: .white) { showDetails = true }
             Rectangle().fill(Color.white.opacity(0.3)).frame(width: 1, height: 22).padding(.horizontal, 4)
             tool("power", "Shut down", tint: Desk.bad) { stopTapped() }
-            if mac.isPhone { tool("circle", "Home", tint: .white) { PhoneTouch.home() } } // also unlocks
+            if mac.isPhone { // unlocks the lock screen, else Home; on once vphoned answers
+                tool("circle", "Home", tint: .white) { PhoneTouch.home() }
+                    .disabled(!homeReady).opacity(homeReady ? 1 : 0.35)
+            }
         }
         .padding(.horizontal, 8)
         .frame(height: 50)

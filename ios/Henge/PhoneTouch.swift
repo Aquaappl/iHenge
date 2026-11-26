@@ -8,30 +8,19 @@ import UIKit
 struct PhoneTouch: UIViewRepresentable {
     func makeUIView(context: Context) -> Surface { Surface() }
 
-    /// The Home button: a finger up from the very bottom edge, as on the Mac (where it was tried): the lock screen takes
-    /// the swipe itself and unlocks (Cmd+H alone does not), and one starting in the bottom 1% that rises 12% also makes
-    /// the engine send Cmd+H, which is Home elsewhere. Finger 15, which PhoneTouch hands out last.
+    /// The Home button, through vphoned: on the lock screen it unlocks, elsewhere it presses Home.
     static func home() {
         HengeLog.log("input", "home button")
-        let ys: [Int32] = [32700, 31000, 29000, 27000, 25000, 23000, 21000, 19000]
-        let x: Int32 = 16384
-        func now() -> UInt32 { UInt32(truncatingIfNeeded: Int(ProcessInfo.processInfo.systemUptime * 1000)) }
         Task.detached {
-            // Locked or asleep: vphoned unlocks it (the swipe alone did not on the 13 mini). Otherwise, or before vphoned
-            // is up, the swipe, which is Home.
-            let unlocked = henge_vm_unlock()
-            HengeLog.log("input", "home: vphoned unlock \(unlocked == 1 ? "unlocked it" : unlocked == 0 ? "was not locked" : "did not answer")")
-            if unlocked == 1 { return }
-            for (i, y) in ys.enumerated() {
-                let ts = now()
-                henge_vm_touch(15, i == 0 ? 0 : 1, x, y, ts)
-                if i > 0 { henge_vm_touch_frame(ts) }
-                try? await Task.sleep(nanoseconds: 120_000_000)
-            }
-            henge_vm_touch(15, 2, x, ys.last!, now())
+            let r = henge_vm_home()
+            HengeLog.log("input", "home: " + (r == 1 ? "unlocked" : r == 2 ? "pressed Home" : "vphoned did not answer"))
         }
     }
-    func updateUIView(_ view: Surface, context: Context) {}
+
+    /// Whether vphoned answers yet (the Home button works only then). Polled by the session while the iPhone runs.
+    static func vphonedReady() async -> Bool {
+        await Task.detached { henge_vm_vphoned_ready() == 1 }.value
+    }
 
     final class Surface: UIView {
         private var ids: [ObjectIdentifier: Int32] = [:]
@@ -62,7 +51,7 @@ struct PhoneTouch: UIViewRepresentable {
                 ids[ObjectIdentifier(t)] = id
                 let (x, y) = point(t)
                 henge_vm_touch(id, 0, x, y, Self.ms(t.timestamp))
-                if logged < 12 {
+                if logged < 60 {
                     logged += 1
                     HengeLog.log("input", "touchscreen: finger \(id) down at \(x),\(y)")
                 }
@@ -90,6 +79,10 @@ struct PhoneTouch: UIViewRepresentable {
                 let (x, y) = point(t)
                 henge_vm_touch(id, 2, x, y, Self.ms(t.timestamp))
                 freeIds.insert(id)
+                if logged < 60 {
+                    logged += 1
+                    HengeLog.log("input", "touchscreen: finger \(id) up at \(x),\(y)")
+                }
             }
         }
     }
