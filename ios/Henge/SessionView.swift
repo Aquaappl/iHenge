@@ -323,21 +323,24 @@ struct SessionView: View {
     @ViewBuilder private func uprightControls(_ layout: Layout) -> some View {
         if !typing && !controlsHidden {
             HStack {
-                tool("eye.slash", "Hide controls") { hideControls() }
-                Spacer()
+                if !mac.isPhone {
+                    tool("eye.slash", "Hide controls") { hideControls() }
+                    Spacer()
+                }
                 tool("keyboard", "Keyboard") { typing = true }
                 Spacer()
                 pasteTool
                 Spacer()
-                tool("plus.magnifyingglass", "Zoom in") { zoomed = true }
-                Spacer()
+                if !mac.isPhone {
+                    tool("plus.magnifyingglass", "Zoom in") { zoomed = true }
+                    Spacer()
+                }
                 tool("info.circle", "Details") { showDetails = true }
                 Spacer()
                 tool("power", "Shut down", tint: Desk.bad) { stopTapped() }
                 if mac.isPhone {
                     Spacer()
-                    tool("circle", "Home") { PhoneTouch.home() } // also unlocks
-                        .disabled(!homeReady).opacity(homeReady ? 1 : 0.35)
+                    phoneTools(tint: Desk.text)
                 }
             }
             .padding(.horizontal, 22)
@@ -418,23 +421,32 @@ struct SessionView: View {
         .accessibilityLabel(label)
     }
 
+    /// The virtual iPhone's buttons, through vphoned (dimmed until it answers): unlock, Home, and close the app in front.
+    @ViewBuilder private func phoneTools(tint: Color) -> some View {
+        Group {
+            tool("lock.open", "Unlock", tint: tint) { PhoneTouch.run("unlock") { henge_vm_unlock() } }
+            tool("circle", "Home", tint: tint) { PhoneTouch.run("home") { henge_vm_home() } }
+            tool("xmark", "Close app", tint: tint) { PhoneTouch.run("close app") { henge_vm_close_app() } }
+        }
+        .disabled(!homeReady).opacity(homeReady ? 1 : 0.35)
+    }
+
     // MARK: Filling the phone
 
     @ViewBuilder private func floatingControls(_ layout: Layout) -> some View {
         let landscape = layout.touch.width > layout.touch.height
         let top = layout.insets.top + (landscape ? 8 : 6)
         let pill = HStack(spacing: 4) {
-            tool("eye.slash", "Hide controls", tint: .white) { hideControls() }
+            if !mac.isPhone { tool("eye.slash", "Hide controls", tint: .white) { hideControls() } }
             tool("keyboard", "Keyboard", tint: .white) { typing.toggle() }
             pasteTool
-            tool(zoomed ? "minus.magnifyingglass" : "plus.magnifyingglass", zoomed ? "Zoom out" : "Zoom in", tint: zoomed ? Desk.accentLight : .white) { zoomed.toggle() }
+            if !mac.isPhone {
+                tool(zoomed ? "minus.magnifyingglass" : "plus.magnifyingglass", zoomed ? "Zoom out" : "Zoom in", tint: zoomed ? Desk.accentLight : .white) { zoomed.toggle() }
+            }
             tool("info.circle", "Details", tint: .white) { showDetails = true }
             Rectangle().fill(Color.white.opacity(0.3)).frame(width: 1, height: 22).padding(.horizontal, 4)
             tool("power", "Shut down", tint: Desk.bad) { stopTapped() }
-            if mac.isPhone { // unlocks the lock screen, else Home; on once vphoned answers
-                tool("circle", "Home", tint: .white) { PhoneTouch.home() }
-                    .disabled(!homeReady).opacity(homeReady ? 1 : 0.35)
-            }
+            if mac.isPhone { phoneTools(tint: .white) }
         }
         .padding(.horizontal, 8)
         .frame(height: 50)

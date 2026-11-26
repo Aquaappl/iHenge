@@ -587,31 +587,35 @@ int henge_vm_unlock(void) {
     return strstr(out, "\"was_locked\":true") || strstr(out, "\"was_screen_off\":true") ? 1 : 0;
 }
 
-int henge_vm_home(void) {
-    int r = henge_vm_unlock();
-    if (r != 0) return r; /* it unlocked (1), or vphoned did not answer (-1) */
-    /* Not locked: the app in front is closed (as from the app switcher), then Home. */
+static int press_home(void) {
+    char out[512];
+    if (vphoned_request("/v1/rpc", "{\"method\":\"input.button\",\"params\":{\"name\":\"home\"},\"id\":4}", 30, out, sizeof out)) return -1;
+    fprintf(stderr, "henge: vphoned input.button home: %.200s\n", out);
+    return strstr(out, "\"result\"") ? 1 : -1;
+}
+
+int henge_vm_home(void) { return press_home(); }
+
+int henge_vm_close_app(void) {
     char out[1024], id[256] = "";
-    if (vphoned_request("/v1/rpc", "{\"method\":\"apps.foreground\",\"params\":{},\"id\":2}", 30, out, sizeof out) == 0) {
-        const char *p = strstr(out, "\"bundle_id\":\"");
-        if (p) {
-            p += 13;
-            size_t n = 0;
-            while (p[n] && p[n] != '"' && n < sizeof id - 1 &&
-                   (p[n] == '.' || p[n] == '-' || p[n] == '_' || (p[n] >= '0' && p[n] <= '9') || ((p[n] | 32) >= 'a' && (p[n] | 32) <= 'z')))
-                n++;
-            if (p[n] == '"') memcpy(id, p, n), id[n] = 0;
-        }
+    if (vphoned_request("/v1/rpc", "{\"method\":\"apps.foreground\",\"params\":{},\"id\":2}", 30, out, sizeof out)) return -1;
+    const char *p = strstr(out, "\"bundle_id\":\"");
+    if (p) {
+        p += 13;
+        size_t n = 0;
+        while (p[n] && p[n] != '"' && n < sizeof id - 1 &&
+               (p[n] == '.' || p[n] == '-' || p[n] == '_' || (p[n] >= '0' && p[n] <= '9') || ((p[n] | 32) >= 'a' && (p[n] | 32) <= 'z')))
+            n++;
+        if (p[n] == '"') memcpy(id, p, n), id[n] = 0;
     }
+    int closed = 0;
     if (id[0] && strcmp(id, "com.apple.springboard")) {
         char body[512];
         snprintf(body, sizeof body, "{\"method\":\"apps.terminate\",\"params\":{\"bundle_id\":\"%s\"},\"id\":3}", id);
-        vphoned_request("/v1/rpc", body, 30, out, sizeof out);
+        if (vphoned_request("/v1/rpc", body, 30, out, sizeof out) == 0 && strstr(out, "\"result\"")) closed = 1;
         fprintf(stderr, "henge: vphoned apps.terminate %s: %.160s\n", id, out);
     }
-    if (vphoned_request("/v1/rpc", "{\"method\":\"input.button\",\"params\":{\"name\":\"home\"},\"id\":4}", 30, out, sizeof out)) return -1;
-    fprintf(stderr, "henge: vphoned input.button home: %.200s\n", out);
-    return strstr(out, "\"result\"") ? 2 : -1;
+    return press_home() < 0 ? -1 : closed;
 }
 
 /* Lighter for the emulated GPU and CPUs: Reduce Motion and Reduce Transparency, set once through vphoned

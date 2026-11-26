@@ -19,9 +19,11 @@ int henge_vm_boot_iphone(const char *rom, const char *sep_rom, const char *sep_s
 /* The virtual iPhone: asks vphoned in the guest to wake and unlock it (blocks up to a few seconds). 1 if it was
    locked or asleep, 0 if it already was not, -1 if vphoned did not answer (not up yet). */
 int henge_vm_unlock(void);
-/* The Home button: unlocks the lock screen (1), or else closes the app in front and presses Home (2); -1 if vphoned
-   did not answer. Blocks. */
+/* The iPhone's Home button (through vphoned): 1, or -1 if vphoned did not answer. Blocks. */
 int henge_vm_home(void);
+/* Closes the app in front (as from the app switcher) and goes Home: 1 if an app was closed, 0 if none was in front,
+   -1 if vphoned did not answer. Blocks. */
+int henge_vm_close_app(void);
 /* Turns on Reduce Motion and Reduce Transparency in the iPhone through vphoned (once; lighter to emulate). */
 int henge_vm_lighten(void);
 /* 1 once vphoned answers its health check (it starts a while after the lock screen shows). */

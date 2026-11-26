@@ -9,12 +9,12 @@ struct PhoneTouch: UIViewRepresentable {
     func makeUIView(context: Context) -> Surface { Surface() }
     func updateUIView(_ view: Surface, context: Context) {}
 
-    /// The Home button, through vphoned: on the lock screen it unlocks, elsewhere it presses Home.
-    static func home() {
-        HengeLog.log("input", "home button")
+    /// One of the iPhone's buttons, through vphoned (blocking calls, so off the main thread); logs what came of it.
+    static func run(_ name: String, _ call: @escaping @Sendable () -> Int32) {
+        HengeLog.log("input", "\(name) button")
         Task.detached {
-            let r = henge_vm_home()
-            HengeLog.log("input", "home: " + (r == 1 ? "unlocked" : r == 2 ? "closed the app and pressed Home" : "vphoned did not answer"))
+            let r = call()
+            HengeLog.log("input", "\(name): " + (r < 0 ? "vphoned did not answer" : "done (\(r))"))
         }
     }
 
