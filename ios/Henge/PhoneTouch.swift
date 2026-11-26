@@ -8,13 +8,23 @@ import UIKit
 struct PhoneTouch: UIViewRepresentable {
     func makeUIView(context: Context) -> Surface { Surface() }
 
-    /// The Home button: Cmd+H on the guest's USB keyboard, which iOS takes as Home (and, on the lock screen, unlock).
+    /// The Home button: a finger up from the very bottom edge, as on the Mac (where it was tried): the lock screen takes
+    /// the swipe itself and unlocks (Cmd+H alone does not), and one starting in the bottom 1% that rises 12% also makes
+    /// the engine send Cmd+H, which is Home elsewhere. Finger 15, which PhoneTouch hands out last.
     static func home() {
         HengeLog.log("input", "home button")
-        henge_vm_key_hid(0xe3, 1) // left GUI (Cmd)
-        henge_vm_key_hid(0x0b, 1) // H
-        henge_vm_key_hid(0x0b, 0)
-        henge_vm_key_hid(0xe3, 0)
+        let ys: [Int32] = [32700, 31000, 29000, 27000, 25000, 23000, 21000, 19000]
+        let x: Int32 = 16384
+        func now() -> UInt32 { UInt32(truncatingIfNeeded: Int(ProcessInfo.processInfo.systemUptime * 1000)) }
+        Task.detached {
+            for (i, y) in ys.enumerated() {
+                let ts = now()
+                henge_vm_touch(15, i == 0 ? 0 : 1, x, y, ts)
+                if i > 0 { henge_vm_touch_frame(ts) }
+                try? await Task.sleep(nanoseconds: 120_000_000)
+            }
+            henge_vm_touch(15, 2, x, ys.last!, now())
+        }
     }
     func updateUIView(_ view: Surface, context: Context) {}
 
